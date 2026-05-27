@@ -1,0 +1,35 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Django
+.env
+*.log
+local_settings.py
+db.sqlite3
+media/
+staticfiles/
+config/staticfiles/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docker volumes (local only)
+*.pid

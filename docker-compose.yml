@@ -1,0 +1,160 @@
+version: "3.9"
+
+networks:
+  zingsa_collect_net:
+    driver: bridge
+
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: zingsa_collect_postgis
+    restart: unless-stopped
+    networks: [zingsa_collect_net]
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+
+      DJANGO_DB_NAME: ${DJANGO_DB_NAME:-zingsa_collect}
+      DJANGO_DB_USER: ${DJANGO_DB_USER:-zingsa_collect}
+      DJANGO_DB_PASSWORD: ${DJANGO_DB_PASSWORD:-zingsa_collect}
+    volumes:
+      - zingsa_collect_db_data:/var/lib/postgresql/data
+      - ./docker/postgres/01-multi-db.sh:/docker-entrypoint-initdb.d/01-multi-db.sh:ro
+    ports:
+      - "8200:5432"   # was 8093 — conflicted with VPS
+
+  minio:
+    image: minio/minio:latest
+    container_name: zingsa_collect_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - zingsa_collect_minio_data:/data
+    ports:
+      - "9018:9000"   # S3 API  — no VPS conflict
+      - "9019:9001"   # Console — no VPS conflict
+    networks: [zingsa_collect_net]
+
+  minio-init:
+    image: minio/mc
+    container_name: zingsa_collect_minio_init
+    depends_on:
+      - minio
+    networks: [zingsa_collect_net]
+    restart: on-failure
+    entrypoint: >
+      /bin/sh -c "
+        until /usr/bin/mc alias set local http://minio:9000
+          $${MINIO_ROOT_USER:-minioadmin}
+          $${MINIO_ROOT_PASSWORD:-minioadmin}; do
+          echo 'Waiting for MinIO...'; sleep 2;
+        done;
+        /usr/bin/mc mb --ignore-existing local/zingsa-collect-media;
+        /usr/bin/mc anonymous set public local/zingsa-collect-media;
+        echo 'MinIO bucket ready.';
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+
+  redis:
+    image: redis:7-alpine
+    container_name: zingsa_collect_redis
+    restart: unless-stopped
+    networks: [zingsa_collect_net]
+    ports:
+      - "8201:6379"   # was 8094 — conflicted with VPS
+
+  web:
+    build: .
+    container_name: zingsa_collect_web
+    restart: unless-stopped
+    command: /docker/entrypoint.sh
+    environment:
+      IN_DOCKER: "1"
+      DJANGO_DB_HOST: "postgis"
+      DJANGO_DB_PORT: "5432"
+      REDIS_URL: "redis://redis:6379/0"
+      CELERY_BROKER_URL: "redis://redis:6379/1"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/2"
+      # MinIO / S3 — internal Docker endpoint for boto3
+      USE_S3: "True"
+      AWS_S3_ENDPOINT_URL: "http://minio:9000"
+      AWS_S3_CUSTOM_DOMAIN: "localhost:9018/zingsa-collect-media"
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_STORAGE_BUCKET_NAME: "zingsa-collect-media"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    ports:
+      - "8206:8005"   # was 8005 — conflicted with VPS
+    depends_on:
+      - postgis
+      - redis
+      - minio
+      - minio-init
+    networks: [zingsa_collect_net]
+
+  worker:
+    build: .
+    container_name: zingsa_collect_worker
+    restart: unless-stopped
+    command: /docker/worker-entrypoint.sh
+    environment:
+      IN_DOCKER: "1"
+      REDIS_URL: "redis://redis:6379/0"
+      CELERY_BROKER_URL: "redis://redis:6379/1"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/2"
+      # MinIO / S3 — internal Docker endpoint for boto3
+      USE_S3: "True"
+      AWS_S3_ENDPOINT_URL: "http://minio:9000"
+      AWS_S3_CUSTOM_DOMAIN: "localhost:9018/zingsa-collect-media"
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_STORAGE_BUCKET_NAME: "zingsa-collect-media"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - web
+      - minio
+    networks: [zingsa_collect_net]
+
+  beat:
+    build: .
+    container_name: zingsa_collect_beat
+    restart: unless-stopped
+    command: /docker/beat-entrypoint.sh
+    environment:
+      IN_DOCKER: "1"
+      REDIS_URL: "redis://redis:6379/0"
+      CELERY_BROKER_URL: "redis://redis:6379/1"
+      CELERY_RESULT_BACKEND: "redis://redis:6379/2"
+      # MinIO / S3 — internal Docker endpoint for boto3
+      USE_S3: "True"
+      AWS_S3_ENDPOINT_URL: "http://minio:9000"
+      AWS_S3_CUSTOM_DOMAIN: "localhost:9018/zingsa-collect-media"
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_STORAGE_BUCKET_NAME: "zingsa-collect-media"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - web
+      - minio
+    networks: [zingsa_collect_net]
+
+volumes:
+  zingsa_collect_db_data:
+  zingsa_collect_minio_data:

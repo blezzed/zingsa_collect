@@ -1,0 +1,1738 @@
+ const formDefinitions = {
+    'test_form_1': {
+      formId: 'test_form_1',
+      title: 'Community GIS Survey',
+      description: 'Comprehensive GIS data collection form for community mapping with conditional logic',
+      version: 'v1.0',
+      mode: 'map_first',
+      projectId: 'PROJ-GIS-001', 
+      createdBy: {
+        name: 'GIS Team',
+        organization: 'Community Development Org'
+      },
+      createdDate: '2026-01-26T12:34:56Z',
+      questions: [
+        {
+          id: 'voiceSignature',
+          type: 'voice',
+          label: 'Audio Recording',
+          required: true,
+          hint: 'Record an audio description of the location'
+        },
+        {
+          id: 'propertyLine',
+          type: 'line',
+          label: 'Property Boundary Line',
+          required: false,
+          hint: 'Draw the property boundary line for GIS mapping'
+        },
+        {
+          id: 'propertyPolygon',
+          type: 'polygon',
+          label: 'Property Boundary Polygon',
+          required: false,
+          hint: 'Draw the property boundary polygon for GIS mapping'
+        },
+        {
+          id: 'location_name',
+          type: 'text',
+          label: 'Location Name',
+          required: true,
+          placeholder: 'Enter location name',
+          minLength: 2,
+          maxLength: 100
+        },
+        {
+          id: 'coordinates',
+          type: 'text',
+          label: 'GPS Coordinates',
+          required: true,
+          placeholder: 'Lat, Lng (e.g., -17.8252, 31.0335)'
+        },
+        {
+          id: 'land_use',
+          type: 'radio',
+          label: 'Land Use Type',
+          required: true,
+          options: [
+            {value: 'residential', label: 'Residential'},
+            {value: 'commercial', label: 'Commercial'},
+            {value: 'agricultural', label: 'Agricultural'},
+            {value: 'industrial', label: 'Industrial'},
+            {value: 'recreational', label: 'Recreational'}
+          ]
+        },
+        {
+          id: 'description',
+          type: 'textarea',
+          label: 'Description',
+          required: false,
+          placeholder: 'Describe the location and its characteristics',
+          minLength: 10,
+          maxLength: 1000
+        },
+        {
+          id: 'photos',
+          type: 'image',
+          label: 'Location Photos',
+          required: false,
+          maxPhotos: 5,
+          hint: 'Take photos of the location from different angles'
+        },
+        {
+          id: 'signature',
+          type: 'signature',
+          label: 'Field Agent Signature',
+          required: true,
+          hint: 'Sign to confirm the survey data'
+        }
+      ]
+    },
+
+
+
+
+
+    'test_form_2': {
+      formId: 'test_form_2',
+      title: 'Wildlife Observation',
+      description: 'Comprehensive wildlife sighting form with conditional questions',
+      version: 'v2.1',
+      mode: 'form_first', // 'form_first' or 'map_first'
+      projectId: 'PROJ-WILDLIFE-002', // Add projectId
+      createdBy: {
+        name: 'Wildlife Conservation Team',
+        organization: 'Environmental Protection Agency'
+      },
+      createdDate: '2026-01-20T10:15:30Z',
+      questions: [
+        {
+          id: 'species_name',
+          type: 'text',
+          label: 'Species Name',
+          required: true,
+          placeholder: 'Common or scientific name',
+          minLength: 2,
+          maxLength: 100
+        },
+        {
+          id: 'observation_date',
+          type: 'date',
+          label: 'Observation Date',
+          required: true
+        },
+        {
+          id: 'observation_time',
+          type: 'time',
+          label: 'Observation Time',
+          required: true
+        },
+        {
+          id: 'count',
+          type: 'number',
+          label: 'Number of Individuals',
+          required: true,
+          placeholder: 'Enter count',
+          min: 1,
+          max: 1000
+        },
+        {
+          id: 'behavior',
+          type: 'radio',
+          label: 'Behavior Observed',
+          required: true,
+          options: [
+            {value: 'feeding', label: 'Feeding'},
+            {value: 'resting', label: 'Resting'},
+            {value: 'moving', label: 'Moving'},
+            {value: 'mating', label: 'Mating'},
+            {value: 'hunting', label: 'Hunting'},
+            {value: 'foraging', label: 'Foraging'},
+            {value: 'playing', label: 'Playing'},
+            {value: 'grooming', label: 'Grooming'},
+            {value: 'territorial_display', label: 'Territorial Display'},
+            {value: 'nesting', label: 'Nesting'},
+            {value: 'teaching_young', label: 'Teaching Young'},
+            {value: 'social_interaction', label: 'Social Interaction'},
+            {value: 'fleeing', label: 'Fleeing'},
+            {value: 'fighting', label: 'Fighting'},
+            {value: 'vigilant_alert', label: 'Vigilant/Alert'},
+            {value: 'basking_sunbathing', label: 'Basking/Sunbathing'},
+            {value: 'drinking', label: 'Drinking'},
+            {value: 'exploring', label: 'Exploring'},
+            {value: 'digging', label: 'Digging'},
+            {value: 'climbing', label: 'Climbing'},
+            {value: 'swimming', label: 'Swimming'},
+            {value: 'flying', label: 'Flying'},
+            {value: 'calling_vocalizing', label: 'Calling/Vocalizing'},
+            {value: 'marking_territory', label: 'Marking Territory'},
+            {value: 'other', label: 'Other'}
+          ]
+        },
+        {
+          id: 'behavior_other',
+          type: 'text',
+          label: 'Please specify behavior',
+          required: true,
+          placeholder: 'Describe the behavior',
+          minLength: 5,
+          maxLength: 200,
+          condition: {
+            field: 'behavior',
+            operator: 'equals',
+            value: 'Other'
+          }
+        },
+        {
+          id: 'health_condition',
+          type: 'radio',
+          label: 'Health Condition',
+          required: true,
+          options: [
+            {value: 'healthy', label: 'Healthy'},
+            {value: 'injured', label: 'Injured'},
+            {value: 'sick', label: 'Sick'},
+            {value: 'dead', label: 'Dead'}
+          ]
+        },
+        {
+          id: 'injury_description',
+          type: 'textarea',
+          label: 'Describe Injury or Illness',
+          required: true,
+          placeholder: 'Provide details about the condition',
+          minLength: 10,
+          maxLength: 500,
+          condition: {
+            field: 'health_condition',
+            operator: 'contains',
+            value: ['injured', 'sick']
+          }
+        },
+        {
+          id: 'location',
+          type: 'location',
+          label: 'Observation Location',
+          required: true,
+          hint: 'Record GPS coordinates of sighting',
+          maxAccuracy: 50
+        },
+        {
+          id: 'habitat',
+          type: 'checkbox',
+          label: 'Habitat Type',
+          required: true,
+          minSelections: 1,
+          maxSelections: 3,
+          options: [
+            {value: 'forest', label: 'Forest'},
+            {value: 'grassland', label: 'Grassland'},
+            {value: 'wetland', label: 'Wetland'},
+            {value: 'urban', label: 'Urban'},
+            {value: 'agricultural', label: 'Agricultural'}
+          ]
+        },
+        {
+          id: 'photos',
+          type: 'image',
+          label: 'Wildlife Photos',
+          required: false,
+          maxPhotos: 3,
+          hint: 'Take clear photos if possible'
+        },
+        {
+          id: 'video',
+          type: 'video',
+          label: 'Video Recording',
+          required: false,
+          maxDuration: 60,
+          hint: 'Record video if safe to do so'
+        },
+        {
+          id: 'notes',
+          type: 'textarea',
+          label: 'Additional Notes',
+          required: false,
+          placeholder: 'Any other observations or details',
+          minLength: 10,
+          maxLength: 1000
+        },
+        {
+          id: 'observer_name',
+          type: 'text',
+          label: 'Observer Name',
+          required: true,
+          placeholder: 'Your name',
+          minLength: 2,
+          maxLength: 50
+        },
+        {
+          id: 'contact',
+          type: 'phone',
+          label: 'Contact Number',
+          required: false,
+          placeholder: 'Phone number for follow-up',
+          minLength: 10,
+          maxLength: 15
+        }
+      ]
+    },
+
+
+
+
+
+    'test_form_3': {
+      formId: 'test_form_3',
+      title: 'Infrastructure Assessment',
+      description: 'Comprehensive infrastructure assessment with conditional logic and file uploads',
+      version: 'v2.0',
+      projectId: 'PROJ-INFRA-003', // Add projectId
+      createdBy: {
+        name: 'Infrastructure Team',
+        organization: 'Community Development Authority'
+      },
+      createdDate: '2026-01-10T08:45:12Z',
+      questions: [
+        {
+          id: 'infrastructure_type',
+          type: 'radio',
+          label: 'Infrastructure Type',
+          required: true,
+          options: [
+            {value: 'road', label: 'Road'},
+            {value: 'bridge', label: 'Bridge'},
+            {value: 'school', label: 'School'},
+            {value: 'clinic', label: 'Clinic'},
+            {value: 'water_supply', label: 'Water Supply'},
+            {value: 'electricity', label: 'Electricity'},
+            {value: 'waste_management', label: 'Waste Management'}
+          ]
+        },
+        {
+          id: 'condition',
+          type: 'radio',
+          label: 'Current Condition',
+          required: true,
+          options: [
+            {value: 'excellent', label: 'Excellent'},
+            {value: 'good', label: 'Good'},
+            {value: 'fair', label: 'Fair'},
+            {value: 'poor', label: 'Poor'},
+            {value: 'critical', label: 'Critical'}
+          ]
+        },
+       
+       
+        {
+          id: 'documentation',
+          type: 'file',
+          label: 'Supporting Documents',
+          required: false,
+          hint: 'Upload assessment reports, photos, or plans',
+          maxFiles: 5,
+          allowedTypes: [
+            'application/pdf',
+            'image/jpeg',
+            'image/png',
+            'image/jpg',
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          ]
+        },
+        {
+          id: 'location',
+          type: 'location',
+          label: 'Infrastructure Location',
+          required: true,
+          hint: 'Record GPS coordinates',
+          maxAccuracy: 20
+        },
+        {
+          id: 'photos',
+          type: 'image',
+          label: 'Infrastructure Photos',
+          required: false,
+          hint: 'Take photos from multiple angles showing current condition'
+        },
+        {
+          id: 'video',
+          type: 'video',
+          label: 'Video Walkthrough',
+          required: false,
+          maxDuration: 180,
+          hint: 'Record a walkthrough if possible (max 3 minutes)'
+        },
+       
+        {
+          id: 'signature',
+          type: 'signature',
+          label: 'Assessor Signature',
+          required: true,
+          hint: 'Sign to confirm assessment accuracy'
+        }
+       
+      ]
+    },
+    'test_form_4': {
+      formId: 'test_form_4',
+      title: 'GIS Point Collection',
+      description: 'Map-first form for capturing GIS points with attributes. Tap on map to add points and enter their details.',
+      version: 'v1.0',
+      mode: 'map_first', // 'form_first' or 'map_first'
+      geometryType: 'point', // Auto-set geometry type for this form
+      projectId: 'PROJ-GIS-POINTS-004',
+      createdBy: {
+        name: 'GIS Mapping Team',
+        organization: 'Environmental Data Collection'
+      },
+      createdDate: '2026-01-25T10:00:00Z',
+      questions: [
+        {
+          id: 'location_name',
+          type: 'text',
+          label: 'Location Name',
+          required: true,
+          placeholder: 'Enter location name',
+          minLength: 2,
+          maxLength: 100
+        },
+        {
+          id: 'temperature',
+          type: 'number',
+          label: 'Temperature (°C)',
+          required: false,
+          placeholder: 'Enter temperature reading'
+        },
+        {
+          id: 'habitat_type',
+          type: 'dropdown',
+          label: 'Habitat Type',
+          required: true,
+          options: [
+            {value: 'forest', label: 'Forest'},
+            {value: 'grassland', label: 'Grassland'},
+            {value: 'wetland', label: 'Wetland'},
+            {value: 'urban', label: 'Urban'},
+            {value: 'agricultural', label: 'Agricultural'}
+          ]
+        },
+        {
+          id: 'sample_date',
+          type: 'date',
+          label: 'Sample Date',
+          required: true
+        },
+        {
+          id: 'is_protected',
+          type: 'radio',
+          label: 'Protected Area',
+          required: false,
+          options: [
+            {value: 'yes', label: 'Yes - Protected'},
+            {value: 'no', label: 'No - Not Protected'},
+            {value: 'unknown', label: 'Unknown'}
+          ]
+        },
+        {
+          id: 'observations',
+          type: 'textarea',
+          label: 'Field Observations',
+          required: false,
+          placeholder: 'Describe any notable observations',
+          minLength: 10,
+          maxLength: 500
+        },
+        {
+          id: 'location_photo',
+          type: 'image',
+          label: 'Location Photo',
+          required: false,
+          maxPhotos: 3,
+          hint: 'Take photos of the location from different angles'
+        },
+        {
+          id: 'location_video',
+          type: 'video',
+          label: 'Location Video',
+          required: false,
+          maxDuration: 60,
+          hint: 'Record a short video of the location'
+        },
+        {
+          id: 'voice_note',
+          type: 'voice',
+          label: 'Voice Note',
+          required: false,
+          maxDuration: 30,
+          hint: 'Record a voice note about the location'
+        }
+      
+      ]
+    },
+
+
+
+
+
+
+    'test_form_5': {
+      formId: 'test_form_5',
+      title: 'GIS Line Collection',
+      description: 'Map-first form for capturing GIS lines with attributes. Tap multiple points to create lines.',
+      version: 'v1.0',
+      mode: 'map_first', // 'form_first' or 'map_first'
+      geometryType: 'line', // Auto-set geometry type for this form
+      projectId: 'PROJ-GIS-LINES-001',
+      createdBy: {
+        name: 'GIS Mapping Team',
+        organization: 'Environmental Data Collection'
+      },
+      createdDate: '2026-01-25T10:00:00Z',
+      questions: [
+        {
+          id: 'location_name',
+          type: 'text',
+          label: 'Location Name',
+          required: true,
+          placeholder: 'Enter location name',
+          minLength: 2,
+          maxLength: 100
+        },
+        {
+          id: 'temperature',
+          type: 'number',
+          label: 'Temperature (°C)',
+          required: false,
+          placeholder: 'Enter temperature reading'
+        },
+        {
+          id: 'habitat_type',
+          type: 'dropdown',
+          label: 'Habitat Type',
+          required: true,
+          options: [
+            {value: 'forest', label: 'Forest'},
+            {value: 'grassland', label: 'Grassland'},
+            {value: 'wetland', label: 'Wetland'},
+            {value: 'urban', label: 'Urban'},
+            {value: 'agricultural', label: 'Agricultural'}
+          ]
+        },
+        {
+          id: 'sample_date',
+          type: 'date',
+          label: 'Sample Date',
+          required: true
+        },
+        {
+          id: 'is_protected',
+          type: 'radio',
+          label: 'Protected Area',
+          required: false,
+          options: [
+            {value: 'yes', label: 'Yes - Protected'},
+            {value: 'no', label: 'No - Not Protected'},
+            {value: 'unknown', label: 'Unknown'}
+          ]
+        },
+        {
+          id: 'observations',
+          type: 'textarea',
+          label: 'Field Observations',
+          required: false,
+          placeholder: 'Describe any notable observations',
+          minLength: 10,
+          maxLength: 500
+        },
+        {
+          id: 'location_photo',
+          type: 'image',
+          label: 'Location Photo',
+          required: false,
+          maxPhotos: 3,
+          hint: 'Take photos of the location from different angles'
+        },
+        {
+          id: 'location_video',
+          type: 'video',
+          label: 'Location Video',
+          required: false,
+          maxDuration: 60,
+          hint: 'Record a short video of the location'
+        },
+        {
+          id: 'voice_note',
+          type: 'voice',
+          label: 'Voice Note',
+          required: false,
+          maxDuration: 30,
+          hint: 'Record a voice note about the location'
+        }
+        
+      ]
+    },
+
+
+
+
+
+
+    'test_form_6': {
+      formId: 'test_form_6',
+      title: 'GIS Polygon Collection',
+      description: 'Map-first form for capturing GIS polygons with attributes. Tap multiple points to create polygons.',
+      version: 'v1.0',
+      mode: 'map_first', // 'form_first' or 'map_first'
+      geometryType: 'polygon', // Auto-set geometry type for this form
+      projectId: 'PROJ-GIS-POLYGONS-006',
+      createdBy: {
+        name: 'GIS Mapping Team',
+        organization: 'Environmental Data Collection'
+      },
+      createdDate: '2026-01-25T10:00:00Z',
+      questions: [
+        {
+          id: 'location_name',
+          type: 'text',
+          label: 'Location Name',
+          required: true,
+          placeholder: 'Enter location name',
+          minLength: 2,
+          maxLength: 100
+        },
+        {
+          id: 'temperature',
+          type: 'number',
+          label: 'Temperature (°C)',
+          required: false,
+          placeholder: 'Enter temperature reading'
+        },
+        {
+          id: 'habitat_type',
+          type: 'dropdown',
+          label: 'Habitat Type',
+          required: true,
+          options: [
+            {value: 'forest', label: 'Forest'},
+            {value: 'grassland', label: 'Grassland'},
+            {value: 'wetland', label: 'Wetland'},
+            {value: 'urban', label: 'Urban'},
+            {value: 'agricultural', label: 'Agricultural'}
+          ]
+        },
+        {
+          id: 'sample_date',
+          type: 'date',
+          label: 'Sample Date',
+          required: true
+        },
+        {
+          id: 'is_protected',
+          type: 'radio',
+          label: 'Protected Area',
+          required: false,
+          options: [
+            {value: 'yes', label: 'Yes - Protected'},
+            {value: 'no', label: 'No - Not Protected'},
+            {value: 'unknown', label: 'Unknown'}
+          ]
+        },
+        {
+          id: 'observations',
+          type: 'textarea',
+          label: 'Field Observations',
+          required: false,
+          placeholder: 'Describe any notable observations',
+          minLength: 10,
+          maxLength: 500
+        },
+        {
+          id: 'location_photo',
+          type: 'image',
+          label: 'Location Photo',
+          required: false,
+          maxPhotos: 3,
+          hint: 'Take photos of the location from different angles'
+        },
+        {
+          id: 'location_video',
+          type: 'video',
+          label: 'Location Video',
+          required: false,
+          maxDuration: 60,
+          hint: 'Record a short video of the location'
+        },
+        {
+          id: 'voice_note',
+          type: 'voice',
+          label: 'Voice Note',
+          required: false,
+          maxDuration: 30,
+          hint: 'Record a voice note about the location'
+        }
+      ]
+    },
+    'comprehensive_test_form': {
+      formId: 'comprehensive_test_form',
+      title: 'Comprehensive Input Types Test',
+      description: 'Complete test form with all supported input types, numeric formats, and conditional logic',
+      version: 'v1.0',
+      projectId: 'TEST-COMP-001',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        // Basic Text Inputs
+        {
+          id: 'full_name',
+          type: 'text',
+          label: 'Full Name',
+          required: true,
+          hint: 'Enter your complete name',
+          minLength: 2,
+          maxLength: 100
+        },
+        {
+          id: 'upload file',
+          type: 'file',
+          label: 'Upload File',
+          required: true,
+          hint: 'Select a file to upload',
+          accept: 'image/*',
+          maxSize: 5 * 1024 * 1024 // 5MB
+        },
+        {
+          id: 'full_name',
+          type: 'text',
+          label: 'Full Name',
+          required: true,
+          hint: 'Enter your complete name',
+          minLength: 2,
+          maxLength: 100
+        },
+        {
+          id: 'asset_name',
+          type: 'dropdown',
+          label: 'Asset Name',
+          required: true,
+          options: [
+            { value: 'buildings', label: 'Buildings' },
+            { value: 'roads', label: 'Roads' },
+            { value: 'water_bodies', label: 'Water Bodies' },
+            { value: 'vegetation', label: 'Vegetation' },
+            { value: 'boundaries', label: 'Boundaries' },
+            { value: 'infrastructure', label: 'Infrastructure' },
+            { value: 'land_use', label: 'Land Use' },
+            { value: 'elevation', label: 'Elevation' },
+            { value: 'utilities', label: 'Utilities' },
+            { value: 'other', label: 'Other' },
+            { value: 'other_name', label: 'Other Name' },
+            { value: 'other_description', label: 'Other Description' },
+            { value: 'other_type', label: 'Other Type' },
+            { value: 'other_category', label: 'Other Category' },
+            { value: 'other_subcategory', label: 'Other Subcategory' },
+            { value: 'other_keywords', label: 'Other Keywords' },
+            { value: 'other_tags', label: 'Other Tags' },
+            { value: 'other_notes', label: 'Other Notes' },
+            { value: 'other_comments', label: 'Other Comments' },
+            { value: 'other_suggestions', label: 'Other Suggestions' },
+            { value: 'other_feedback', label: 'Other Feedback' },
+          ],
+          hint: 'Select the type of asset you are mapping'
+        },
+        {
+          id: 'email_address',
+          type: 'email',
+          label: 'Email Address',
+          required: true,
+          hint: 'Enter a valid email address'
+        },
+        {
+          id: 'phone_number',
+          type: 'phone',
+          label: 'Phone Number',
+          required: false,
+          hint: 'Include country code',
+          minLength: 10,
+          maxLength: 15
+        },
+        {
+          id: 'website_url',
+          type: 'url',
+          label: 'Personal Website',
+          required: false,
+          hint: 'https://example.com'
+        },
+        
+        // Numeric Types with Different Formats
+        {
+          id: 'age',
+          type: 'number',
+          label: 'Age (Integer Only)',
+          required: true,
+          hint: 'Enter your age in whole numbers',
+          numericType: 'integer',
+          min: 1,
+          max: 120
+        },
+        {
+          id: 'height_meters',
+          type: 'number',
+          label: 'Height in Meters (2 Decimal Places)',
+          required: true,
+          hint: 'Enter height with 2 decimal places',
+          numericType: 'decimal',
+          decimalPlaces: 2,
+          min: 0.5,
+          max: 3.0
+        },
+        {
+          id: 'weight_kg',
+          type: 'number',
+          label: 'Weight in kg (Float)',
+          required: false,
+          hint: 'Enter weight with any precision',
+          numericType: 'float',
+          min: 1,
+          max: 500
+        },
+        {
+          id: 'temperature',
+          type: 'number',
+          label: 'Body Temperature (1 Decimal Place)',
+          required: false,
+          hint: 'Enter temperature in Celsius',
+          numericType: 'decimal',
+          decimalPlaces: 1,
+          min: 35.0,
+          max: 42.0
+        },
+        {
+          id: 'income',
+          type: 'number',
+          label: 'Monthly Income (Integer)',
+          required: false,
+          hint: 'Enter monthly income as whole number',
+          numericType: 'integer',
+          min: 0,
+          max: 1000000
+        },
+        
+        // Date and Time
+        {
+          id: 'birth_date',
+          type: 'date',
+          label: 'Date of Birth',
+          required: true,
+          hint: 'Select your birth date'
+        },
+        {
+          id: 'preferred_time',
+          type: 'time',
+          label: 'Preferred Time',
+          required: false,
+          hint: 'Select your preferred contact time'
+        },
+        
+        {
+          id: 'asset_id',
+          type: 'dropdown',
+          label: 'Asset ID',
+          required: true,
+          options: [
+            { value: 'building_001', label: 'Building 001' },
+            { value: 'road_001', label: 'Road 001' },
+            { value: 'water_001', label: 'Water Body 001' },
+            { value: 'veg_001', label: 'Vegetation 001' },
+            { value: 'boundary_001', label: 'Boundary 001' },
+            { value: 'infra_001', label: 'Infrastructure 001' },
+            { value: 'land_001', label: 'Land Use 001' },
+            { value: 'elev_001', label: 'Elevation 001' },
+            { value: 'util_001', label: 'Utility 001' }
+          ],
+          hint: 'Enter the unique identifier for this asset'
+        },
+        {
+          id: 'appointment_date',
+          type: 'date',
+          label: 'Appointment Date',
+          required: false,
+          hint: 'Select appointment date'
+        },
+        {
+          id: 'appointment_time',
+          type: 'time', 
+          label: 'Appointment Time',
+          required: false,
+          hint: 'Select appointment time'
+        },
+        
+        // Text Area
+        {
+          id: 'bio',
+          type: 'textarea',
+          label: 'Biography',
+          required: false,
+          hint: 'Tell us about yourself',
+          minLength: 20,
+          maxLength: 1000
+        },
+        
+        // Single Choice (Radio)
+        {
+          id: 'gender',
+          type: 'radio',
+          label: 'Gender',
+          required: true,
+          hint: 'Please select your gender',
+          options: [
+            {value: 'male', label: 'Male'},
+            {value: 'female', label: 'Female'},
+            {value: 'other', label: 'Other'},
+            {value: 'prefer_not_to_say', label: 'Prefer not to say'}
+          ]
+        },
+        
+        // Conditional Text Field
+        {
+          id: 'gender_specify',
+          type: 'text',
+          label: 'Please specify gender',
+          required: true,
+          hint: 'Describe how you identify',
+          minLength: 2,
+          maxLength: 100,
+          condition: {
+            field: 'gender',
+            operator: 'equals',
+            value: 'other'
+          }
+        },
+        
+        // Multiple Choice (Checkbox)
+        {
+          id: 'interests',
+          type: 'checkbox',
+          label: 'Areas of Interest',
+          required: true,
+          hint: 'Select all that apply',
+          minSelections: 1,
+          maxSelections: 5,
+          options: [
+            {value: 'technology', label: 'Technology'},
+            {value: 'sports', label: 'Sports'},
+            {value: 'music', label: 'Music'},
+            {value: 'arts', label: 'Arts & Culture'},
+            {value: 'science', label: 'Science'},
+            {value: 'travel', label: 'Travel'},
+            {value: 'cooking', label: 'Cooking'},
+            {value: 'reading', label: 'Reading'},
+            {value: 'gaming', label: 'Gaming'},
+            {value: 'photography', label: 'Photography'}
+          ]
+        },
+        
+        // Conditional Text for Other Interest
+        {
+          id: 'other_interest',
+          type: 'text',
+          label: 'Specify other interest',
+          required: true,
+          hint: 'Tell us about your other interests',
+          minLength: 5,
+          maxLength: 200,
+          condition: {
+            field: 'interests',
+            operator: 'contains',
+            value: 'other'
+          }
+        },
+        
+        // Dropdown
+        {
+          id: 'education_level',
+          type: 'dropdown',
+          label: 'Education Level',
+          required: true,
+          hint: 'Select highest education completed',
+          options: [
+            {value: 'primary', label: 'Primary School'},
+            {value: 'secondary', label: 'Secondary School'},
+            {value: 'high_school', label: 'High School'},
+            {value: 'diploma', label: 'Diploma/Certificate'},
+            {value: 'bachelor', label: 'Bachelor Degree'},
+            {value: 'master', label: 'Master Degree'},
+            {value: 'phd', label: 'PhD/Doctorate'},
+            {value: 'other', label: 'Other'}
+          ]
+        },
+        
+        // Conditional Field for Education Details
+        {
+          id: 'education_details',
+          type: 'text',
+          label: 'Education Details',
+          required: true,
+          hint: 'Specify your education details',
+          minLength: 10,
+          maxLength: 300,
+          condition: {
+            field: 'education_level',
+            operator: 'equals',
+            value: 'other'
+          }
+        },
+        
+        // Location/GPS
+        {
+          id: 'home_location',
+          type: 'location',
+          label: 'Home Location',
+          required: true,
+          hint: 'Record your home GPS coordinates',
+          maxAccuracy: 50
+        },
+        
+        // Media Files
+        {
+          id: 'profile_photo',
+          type: 'image',
+          label: 'Profile Photo',
+          required: false,
+          hint: 'Take a clear photo of yourself'
+        },
+        {
+          id: 'video_introduction',
+          type: 'video',
+          label: 'Video Introduction',
+          required: false,
+          hint: 'Record a 30-second video introduction',
+          maxDuration: 30
+        },
+        {
+          id: 'voice_sample',
+          type: 'voice',
+          label: 'Voice Sample',
+          required: false,
+          hint: 'Record a short voice message',
+          maxDuration: 15
+        },
+        {
+          id: 'digital_signature',
+          type: 'signature',
+          label: 'Digital Signature',
+          required: true,
+          hint: 'Sign to confirm all information is accurate'
+        },
+        
+        // File Upload
+        {
+          id: 'documents',
+          type: 'file',
+          label: 'Supporting Documents',
+          required: false,
+          hint: 'Upload relevant documents (PDF, images)',
+          maxFiles: 3,
+          allowedTypes: ['application/pdf', 'image/jpeg', 'image/png']
+        },
+        
+        // GIS Drawing
+        {
+          id: 'property_boundary',
+          type: 'line',
+          label: 'Property Boundary Line',
+          required: false,
+          hint: 'Draw your property boundary line'
+        },
+        {
+          id: 'land_area',
+          type: 'polygon',
+          label: 'Land Area Polygon',
+          required: false,
+          hint: 'Draw the complete land area'
+        },
+        
+        // Complex Conditional Logic
+        {
+          id: 'has_vehicle',
+          type: 'radio',
+          label: 'Do you own a vehicle?',
+          required: true,
+          options: [
+            {value: 'yes', label: 'Yes'},
+            {value: 'no', label: 'No'}
+          ]
+        },
+        {
+          id: 'vehicle_type',
+          type: 'checkbox',
+          label: 'Vehicle Types',
+          required: true,
+          minSelections: 1,
+          maxSelections: 3,
+          options: [
+            {value: 'car', label: 'Car'},
+            {value: 'motorcycle', label: 'Motorcycle'},
+            {value: 'bicycle', label: 'Bicycle'},
+            {value: 'truck', label: 'Truck'},
+            {value: 'other', label: 'Other'}
+          ],
+          condition: {
+            field: 'has_vehicle',
+            operator: 'equals',
+            value: 'yes'
+          }
+        },
+        {
+          id: 'vehicle_year',
+          type: 'number',
+          label: 'Vehicle Year',
+          required: true,
+          hint: 'Enter vehicle manufacturing year',
+          numericType: 'integer',
+          min: 1900,
+          max: 2026,
+          condition: {
+            field: 'vehicle_type',
+            operator: 'contains',
+            value: ['car', 'motorcycle', 'truck']
+          }
+        },
+        
+        // Age-based Conditional Logic
+        {
+          id: 'work_status',
+          type: 'radio',
+          label: 'Work Status',
+          required: true,
+          options: [
+            {value: 'student', label: 'Student'},
+            {value: 'employed', label: 'Employed'},
+            {value: 'self_employed', label: 'Self-Employed'},
+            {value: 'unemployed', label: 'Unemployed'},
+            {value: 'retired', label: 'Retired'}
+          ],
+          condition: {
+            field: 'age',
+            operator: 'greater_than',
+            value: 15
+          }
+        },
+        {
+          id: 'school_level',
+          type: 'dropdown',
+          label: 'School Level',
+          required: true,
+          options: [
+            {value: 'elementary', label: 'Elementary'},
+            {value: 'middle', label: 'Middle School'},
+            {value: 'high_school', label: 'High School'},
+            {value: 'college', label: 'College'}
+          ],
+          condition: {
+            field: 'age',
+            operator: 'less_than',
+            value: 18
+          }
+        },
+        
+        // Income-based Conditional Logic
+        {
+          id: 'tax_filing',
+          type: 'radio',
+          label: 'Tax Filing Status',
+          required: true,
+          options: [
+            {value: 'required', label: 'Required to File'},
+            {value: 'not_required', label: 'Not Required'},
+            {value: 'unsure', label: 'Unsure'}
+          ],
+          condition: {
+            field: 'income',
+            operator: 'greater_than',
+            value: 0
+          }
+        },
+        
+        // Location-based Conditional Logic
+        {
+          id: 'transportation_method',
+          type: 'checkbox',
+          label: 'Primary Transportation Methods',
+          required: true,
+          minSelections: 1,
+          maxSelections: 4,
+          options: [
+            {value: 'walking', label: 'Walking'},
+            {value: 'public_transport', label: 'Public Transport'},
+            {value: 'private_vehicle', label: 'Private Vehicle'},
+            {value: 'bicycle', label: 'Bicycle'},
+            {value: 'rideshare', label: 'Rideshare/Taxi'}
+          ],
+          condition: {
+            field: 'home_location',
+            operator: 'not_equals',
+            value: null
+          }
+        }
+      ]
+    },
+
+
+
+
+    // Simple test forms with single questions
+    'simple_text': {
+      formId: 'simple_text',
+      title: 'Simple Text Input',
+      description: 'Simple text input form',
+      version: 'v1.0',
+      projectId: 'TEST-SIMPLE-001',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'simple_text',
+          type: 'text',
+          label: 'Simple Text Input',
+          required: true,
+          hint: 'Enter some text'
+        }
+      ]
+    },
+    'single_choice': {
+      formId: 'single_choice',
+      title: 'Single Choice Question',
+      description: 'Single choice question form',
+      version: 'v1.0',
+      projectId: 'TEST-SIMPLE-002',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'single_choice',
+          type: 'radio',
+          label: 'Single Choice Question',
+          required: true,
+          options: [
+            { value: 'option1', label: 'First Option' },
+            { value: 'option2', label: 'Second Option' },
+            { value: 'option3', label: 'Third Option' }
+          ]
+        }
+      ]
+    },
+    'yes_no': {
+      formId: 'yes_no',
+      title: 'Yes/No Question',
+      description: 'Yes/No question form',
+      version: 'v1.0',
+      projectId: 'TEST-SIMPLE-003',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'yes_no',
+          type: 'radio',
+          label: 'Yes/No Question',
+          required: true,
+          options: [
+            { value: 'yes', label: 'Yes' },
+            { value: 'no', label: 'No' }
+          ]
+        }
+      ]
+    },
+    'checkbox_test': {
+      formId: 'checkbox_test',
+      title: 'Multiple Selection',
+      description: 'Multiple selection form',
+      version: 'v1.0',
+      projectId: 'TEST-SIMPLE-004',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'checkbox_test',
+          type: 'checkbox',
+          label: 'Multiple Selection',
+          required: false,
+          options: [
+            { value: 'choice1', label: 'First Choice' },
+            { value: 'choice2', label: 'Second Choice' },
+            { value: 'choice3', label: 'Third Choice' },
+            { value: 'choice4', label: 'Fourth Choice' }
+          ]
+        }
+      ]
+    },
+    'dropdown_test': {
+      formId: 'dropdown_test',
+      title: 'Dropdown Selection',
+      description: 'Dropdown selection form',
+      version: 'v1.0',
+      projectId: 'TEST-SIMPLE-005',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'dropdown_test',
+          type: 'dropdown',
+          label: 'Dropdown Selection',
+          required: true,
+          options: [
+            { value: 'alpha', label: 'Alpha Option' },
+            { value: 'beta', label: 'Beta Option' },
+            { value: 'gamma', label: 'Gamma Option' },
+            { value: 'other', label: 'Other' }
+          ]
+        }
+      ]
+    },
+    'textarea_test': {
+      formId: 'textarea_test',
+      title: 'Comments/Notes',
+      description: 'Comments/notes form',
+      version: 'v1.0',
+      projectId: 'TEST-SIMPLE-006',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'textarea_test',
+          type: 'textarea',
+          label: 'Comments/Notes',
+          required: false,
+          hint: 'Enter any additional comments'
+        }
+      ]
+    },
+    'number_test': {
+      formId: 'number_test',
+      title: 'Test Number',
+      description: 'Test number form',
+      version: 'v1.0',
+      projectId: 'TEST-SIMPLE-007',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'number_test',
+          type: 'number',
+          label: 'Test Number',
+          required: true,
+          hint: 'Enter a test number',
+          min: 0,
+          max: 100
+        }
+      ]
+    },
+    'date_test': {
+      formId: 'date_test',
+      title: 'Test Date',
+      description: 'Test date form',
+      version: 'v1.0',
+      projectId: 'TEST-SIMPLE-008',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'date_test',
+          type: 'date',
+          label: 'Test Date',
+          required: false,
+          hint: 'Select a test date'
+        }
+      ]
+    },
+    // Additional forms 13-20 (minimal definitions for testing)
+    'form_13': {
+      formId: 'form_13',
+      title: 'Form 13',
+      description: 'Form 13 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-013',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_13',
+          type: 'text',
+          label: 'Form 13 Field',
+          required: true
+        }
+      ]
+    },
+    'form_14': {
+      formId: 'form_14',
+      title: 'Form 14',
+      description: 'Form 14 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-014',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_14',
+          type: 'text',
+          label: 'Form 14 Field',
+          required: true
+        }
+      ]
+    },
+    'form_15': {
+      formId: 'form_15',
+      title: 'Form 15',
+      description: 'Form 15 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-015',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_15',
+          type: 'text',
+          label: 'Form 15 Field',
+          required: true
+        }
+      ]
+    },
+    'form_16': {
+      formId: 'form_16',
+      title: 'Form 16',
+      description: 'Form 16 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-016',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_16',
+          type: 'text',
+          label: 'Form 16 Field',
+          required: true
+        }
+      ]
+    },
+    'form_17': {
+      formId: 'form_17',
+      title: 'Form 17',
+      description: 'Form 17 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-017',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_17',
+          type: 'text',
+          label: 'Form 17 Field',
+          required: true
+        }
+      ]
+    },
+    'form_18': {
+      formId: 'form_18',
+      title: 'Form 18',
+      description: 'Form 18 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-018',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_18',
+          type: 'text',
+          label: 'Form 18 Field',
+          required: true
+        }
+      ]
+    },
+    'form_19': {
+      formId: 'form_19',
+      title: 'Form 19',
+      description: 'Form 19 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-019',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_19',
+          type: 'text',
+          label: 'Form 19 Field',
+          required: true
+        }
+      ]
+    },
+    'form_20': {
+      formId: 'form_20',
+      title: 'Form 20',
+      description: 'Form 20 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-020',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_20',
+          type: 'text',
+          label: 'Form 20 Field',
+          required: true
+        }
+      ]
+    },
+    // Additional forms 21-30 (minimal definitions for testing)
+    'form_21': {
+      formId: 'form_21',
+      title: 'Form 21',
+      description: 'Form 21 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-021',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_21',
+          type: 'text',
+          label: 'Form 21 Field',
+          required: true
+        }
+      ]
+    },
+    'form_22': {
+      formId: 'form_22',
+      title: 'Form 22',
+      description: 'Form 22 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-022',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_22',
+          type: 'text',
+          label: 'Form 22 Field',
+          required: true
+        }
+      ]
+    },
+    'form_23': {
+      formId: 'form_23',
+      title: 'Form 23',
+      description: 'Form 23 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-023',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_23',
+          type: 'text',
+          label: 'Form 23 Field',
+          required: true
+        }
+      ]
+    },
+    'form_24': {
+      formId: 'form_24',
+      title: 'Form 24',
+      description: 'Form 24 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-024',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_24',
+          type: 'text',
+          label: 'Form 24 Field',
+          required: true
+        }
+      ]
+    },
+    'form_25': {
+      formId: 'form_25',
+      title: 'Form 25',
+      description: 'Form 25 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-025',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_25',
+          type: 'text',
+          label: 'Form 25 Field',
+          required: true
+        }
+      ]
+    },
+    'form_26': {
+      formId: 'form_26',
+      title: 'Form 26',
+      description: 'Form 26 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-026',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_26',
+          type: 'text',
+          label: 'Form 26 Field',
+          required: true
+        }
+      ]
+    },
+    'form_27': {
+      formId: 'form_27',
+      title: 'Form 27',
+      description: 'Form 27 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-027',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_27',
+          type: 'text',
+          label: 'Form 27 Field',
+          required: true
+        }
+      ]
+    },
+    'form_28': {
+      formId: 'form_28',
+      title: 'Form 28',
+      description: 'Form 28 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-028',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_28',
+          type: 'text',
+          label: 'Form 28 Field',
+          required: true
+        }
+      ]
+    },
+    'form_29': {
+      formId: 'form_29',
+      title: 'Form 29',
+      description: 'Form 29 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-029',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_29',
+          type: 'text',
+          label: 'Form 29 Field',
+          required: true
+        }
+      ]
+    },
+    'form_30': {
+      formId: 'form_30',
+      title: 'Form 30',
+      description: 'Form 30 description',
+      version: 'v1.0',
+      projectId: 'TEST-GEN-030',
+      createdBy: {
+        name: 'Development Team',
+        organization: 'Zingsa Collector Test Suite'
+      },
+      createdDate: '2026-01-25T12:34:56Z',
+      questions: [
+        {
+          id: 'field_30',
+          type: 'text',
+          label: 'Form 30 Field',
+          required: true
+        }
+      ]
+    }
+  };
+
