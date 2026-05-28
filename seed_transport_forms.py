@@ -6,19 +6,20 @@ Requires: pip install requests
 
 Usage:
     python seed_transport_forms.py
-    python seed_transport_forms.py --base-url http://127.0.0.1:8206
+    python seed_transport_forms.py --base-url http://172.30.5.24:8206
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 
 import requests
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8206"
+DEFAULT_BASE_URL = os.getenv("ZINGSA_BASE_URL", "http://127.0.0.1:8206")
 
 LOGIN_PAYLOAD = {
     "username": "zingsa_admin",

@@ -20,7 +20,7 @@ class FormSerializer(serializers.ModelSerializer):
         model = Form
         fields = [
             'id', 'project', 'title', 'slug', 'description', 'mode', 
-            'geometry_type', 'current_version', 'current_version_details', 
+            'geometry_type', 'has_geodata', 'current_version', 'current_version_details', 
             'status', 'submission_table_name', 'schema', 'created_by', 
             'created_at', 'updated_at'
         ]

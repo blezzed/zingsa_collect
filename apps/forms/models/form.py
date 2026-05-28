@@ -58,6 +58,10 @@ class Form(models.Model):
     def __str__(self):
         return f"{self.title} ({self.slug})"
 
+    @property
+    def has_geodata(self):
+        return self.geometry_type != 'none'
+
 
 class FormVersion(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -30,6 +30,9 @@ urlpatterns = [
     path('api/sync/', include('apps.sync.urls')),
     path('api/geospatial/', include('apps.geospatial.urls')),
     path('api/analytics/', include('apps.analytics.urls')),
+    
+    # Web-specific Data Endpoints
+    path('api/web/', include('apps.submissions.web_urls')),
 ]
 
 if settings.DEBUG:

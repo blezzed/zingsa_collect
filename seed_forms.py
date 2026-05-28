@@ -7,19 +7,20 @@ Requires: pip install requests
 Usage:
     python seed_forms.py
     python seed_forms.py --forms-dir "E:\\Downloads\\FORMS (1)\\FORMS"
-    python seed_forms.py --base-url http://127.0.0.1:8206
+    python seed_forms.py --base-url http://172.30.5.24:8206
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 import requests
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8206"
+DEFAULT_BASE_URL = os.getenv("ZINGSA_BASE_URL", "http://127.0.0.1:8206")
 DEFAULT_FORMS_DIR = Path(r"E:\Downloads\FORMS (1)\FORMS")
 
 REGISTER_PAYLOAD = {

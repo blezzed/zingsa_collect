@@ -84,7 +84,7 @@ services:
       # MinIO / S3 — internal Docker endpoint for boto3
       USE_S3: "True"
       AWS_S3_ENDPOINT_URL: "http://minio:9000"
-      AWS_S3_CUSTOM_DOMAIN: "localhost:9018/zingsa-collect-media"
+      AWS_S3_CUSTOM_DOMAIN: "172.30.5.24:9018/zingsa-collect-media"
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       AWS_STORAGE_BUCKET_NAME: "zingsa-collect-media"
@@ -114,7 +114,7 @@ services:
       # MinIO / S3 — internal Docker endpoint for boto3
       USE_S3: "True"
       AWS_S3_ENDPOINT_URL: "http://minio:9000"
-      AWS_S3_CUSTOM_DOMAIN: "localhost:9018/zingsa-collect-media"
+      AWS_S3_CUSTOM_DOMAIN: "172.30.5.24:9018/zingsa-collect-media"
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       AWS_STORAGE_BUCKET_NAME: "zingsa-collect-media"
@@ -141,7 +141,7 @@ services:
       # MinIO / S3 — internal Docker endpoint for boto3
       USE_S3: "True"
       AWS_S3_ENDPOINT_URL: "http://minio:9000"
-      AWS_S3_CUSTOM_DOMAIN: "localhost:9018/zingsa-collect-media"
+      AWS_S3_CUSTOM_DOMAIN: "172.30.5.24:9018/zingsa-collect-media"
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       AWS_STORAGE_BUCKET_NAME: "zingsa-collect-media"

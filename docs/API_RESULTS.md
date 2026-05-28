@@ -2,7 +2,7 @@
 
 **Test run:** All E2E flow tests passed (`apps.forms.tests.test_collect_flow.ZingsaCollectFlowTestCase`).
 
-**Base URL (local Docker):** `http://localhost:8206`
+**Base URL (VPS):** `http://172.30.5.24:8206`
 
 **Authentication:** JWT Bearer tokens (Djoser + SimpleJWT).
 
@@ -76,7 +76,7 @@ Djoser auth endpoints (`/api/auth/…`) use Djoser’s default error format.
 ### Register User
 
 ```bash
-curl -X POST http://localhost:8206/api/auth/users/ \
+curl -X POST http://172.30.5.24:8206/api/auth/users/ \
   -H "Content-Type: application/json" \
   -d '{
     "username": "field_officer_01",
@@ -99,7 +99,7 @@ curl -X POST http://localhost:8206/api/auth/users/ \
 ### Obtain JWT Token
 
 ```bash
-curl -X POST http://localhost:8206/api/auth/jwt/create/ \
+curl -X POST http://172.30.5.24:8206/api/auth/jwt/create/ \
   -H "Content-Type: application/json" \
   -d '{
     "username": "field_officer_01",
@@ -125,7 +125,7 @@ Use the access token on all subsequent requests:
 ### Refresh Token
 
 ```bash
-curl -X POST http://localhost:8206/api/auth/jwt/refresh/ \
+curl -X POST http://172.30.5.24:8206/api/auth/jwt/refresh/ \
   -H "Content-Type: application/json" \
   -d '{"refresh": "<refresh_token>"}'
 ```
@@ -137,7 +137,7 @@ curl -X POST http://localhost:8206/api/auth/jwt/refresh/ \
 ### Create Organization
 
 ```bash
-curl -X POST http://localhost:8206/api/organizations/ \
+curl -X POST http://172.30.5.24:8206/api/organizations/ \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -163,7 +163,7 @@ curl -X POST http://localhost:8206/api/organizations/ \
 ### List Organizations
 
 ```bash
-curl http://localhost:8206/api/organizations/ \
+curl http://172.30.5.24:8206/api/organizations/ \
   -H "Authorization: Bearer <access_token>"
 ```
 
@@ -174,7 +174,7 @@ curl http://localhost:8206/api/organizations/ \
 ### Create Project
 
 ```bash
-curl -X POST http://localhost:8206/api/projects/ \
+curl -X POST http://172.30.5.24:8206/api/projects/ \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -208,7 +208,7 @@ curl -X POST http://localhost:8206/api/projects/ \
 ### List Projects
 
 ```bash
-curl http://localhost:8206/api/projects/ \
+curl http://172.30.5.24:8206/api/projects/ \
   -H "Authorization: Bearer <access_token>"
 ```
 
@@ -221,7 +221,7 @@ curl http://localhost:8206/api/projects/ \
 Send the flat schema directly (same structure as `full_clean.json` → `test_form_1`). Update `projectId` to match the project's `code`.
 
 ```bash
-curl -X POST http://localhost:8206/api/projects/<project_uuid>/forms/ \
+curl -X POST http://172.30.5.24:8206/api/projects/<project_uuid>/forms/ \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d @form_payload.json
@@ -285,7 +285,7 @@ curl -X POST http://localhost:8206/api/projects/<project_uuid>/forms/ \
 ### Publish Form
 
 ```bash
-curl -X POST http://localhost:8206/api/forms/<form_uuid>/publish/ \
+curl -X POST http://172.30.5.24:8206/api/forms/<form_uuid>/publish/ \
   -H "Authorization: Bearer <access_token>"
 ```
 
@@ -309,7 +309,7 @@ curl -X POST http://localhost:8206/api/forms/<form_uuid>/publish/ \
 ### Download Published Form Definition
 
 ```bash
-curl http://localhost:8206/api/forms/<form_uuid>/download/ \
+curl http://172.30.5.24:8206/api/forms/<form_uuid>/download/ \
   -H "Authorization: Bearer <access_token>"
 ```
 
@@ -320,7 +320,7 @@ curl http://localhost:8206/api/forms/<form_uuid>/download/ \
 ### Single Submission Sync
 
 ```bash
-curl -X POST http://localhost:8206/api/sync/submissions/ \
+curl -X POST http://172.30.5.24:8206/api/sync/submissions/ \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -508,6 +508,6 @@ docker compose exec web python manage.py test apps.forms.tests.test_collect_flow
 
 ## Interactive API Docs
 
-- Swagger UI: http://localhost:8206/api/docs/
-- ReDoc: http://localhost:8206/api/docs/redoc/
-- OpenAPI schema: http://localhost:8206/api/schema/
+- Swagger UI: http://172.30.5.24:8206/api/docs/
+- ReDoc: http://172.30.5.24:8206/api/docs/redoc/
+- OpenAPI schema: http://172.30.5.24:8206/api/schema/
