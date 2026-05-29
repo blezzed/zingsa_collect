@@ -6,7 +6,34 @@ The backend runs on `http://172.30.5.24:8206` (or your production domain).
 
 ---
 
-## 1. Authentication
+## 1. User Registration (Optional)
+If a field officer does not have an account, they can register first. Note that an organization administrator must invite them to a project before they can download any forms.
+
+**Request:** `POST /api/auth/users/`
+```json
+{
+  "username": "field_officer_01",
+  "email": "officer01@zingsa.test",
+  "password": "StrongPassword123!",
+  "first_name": "John",
+  "last_name": "Doe"
+}
+```
+
+**Response:**
+```json
+{
+  "id": 2,
+  "username": "field_officer_01",
+  "email": "officer01@zingsa.test",
+  "first_name": "John",
+  "last_name": "Doe"
+}
+```
+
+---
+
+## 2. Authentication
 The backend uses stateless JWT (JSON Web Tokens) for authentication.
 
 ### **POST `/api/auth/jwt/create/`**

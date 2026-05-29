@@ -23,7 +23,10 @@ class OrganizationListCreateView(APIView):
         name = require_non_empty_string(request.data, 'name', label='Organization name')
         org = create_organization_service(
             name=name,
-            code=request.data.get('code'),
+            description=request.data.get('description'),
+            contact_email=request.data.get('contact_email'),
+            phone_number=request.data.get('phone_number'),
+            address=request.data.get('address'),
             user=request.user,
         )
         return Response(OrganizationSerializer(org).data, status=status.HTTP_201_CREATED)

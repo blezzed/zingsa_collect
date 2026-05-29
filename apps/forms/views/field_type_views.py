@@ -22,7 +22,8 @@ class FormFieldTypeListView(APIView):
             grouped[cat].append({
                 "name": ft.name,
                 "label": ft.label,
-                "description": ft.description
+                "description": ft.description,
+                "properties_schema": ft.properties_schema
             })
             
         # Return as an array of categories

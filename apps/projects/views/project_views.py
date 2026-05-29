@@ -22,7 +22,6 @@ class ProjectListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         project = create_project_service(
             name=serializer.validated_data['name'],
-            code=serializer.validated_data.get('code'),
             description=serializer.validated_data.get('description'),
             organization=serializer.validated_data.get('organization'),
             owner=request.user,

@@ -30,6 +30,7 @@ if os.name == 'nt' and not os.environ.get('IN_DOCKER'):
 
 # Application definition
 INSTALLED_APPS = [
+    'jazzmin',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',

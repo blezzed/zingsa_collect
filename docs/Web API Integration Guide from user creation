@@ -1,0 +1,262 @@
+# ZINGSA Collect: Web API Integration Guide
+
+This document outlines the complete sequence of API calls the web frontend should make to authenticate, manage workspaces (Orgs/Projects/Members), design forms, and visualize the submitted data on maps and attribute tables.
+
+All examples assume the backend is running at `http://172.30.5.24:8206`.
+
+---
+
+## 1. User Registration (Optional)
+If a user does not have an account, they must register before they can log in.
+
+**Request:** `POST /api/auth/users/`
+```json
+{
+  "username": "johndoe",
+  "email": "johndoe@zingsa.test",
+  "password": "StrongPassword123!",
+  "first_name": "John",
+  "last_name": "Doe"
+}
+```
+
+**Response:**
+```json
+{
+  "id": 2,
+  "username": "johndoe",
+  "email": "johndoe@zingsa.test",
+  "first_name": "John",
+  "last_name": "Doe"
+}
+```
+
+---
+
+## 2. Authentication
+The web app must log in to obtain a JWT token.
+
+**Request:** `POST /api/auth/jwt/create/`
+```json
+{
+  "username": "zingsa_admin",
+  "password": "SecureSeedPass2026!"
+}
+```
+
+**Response:**
+```json
+{
+  "access": "eyJhbGciOi...",
+  "refresh": "eyJhbGciOi...",
+  "user": {
+    "id": 1,
+    "username": "zingsa_admin"
+  }
+}
+```
+> [!IMPORTANT]
+> Attach the `access` token as an `Authorization: Bearer <access_token>` header on all subsequent requests.
+
+---
+
+## 2. Workspace Management (Orgs & Projects)
+
+### A. Create an Organization
+Creates a new isolated workspace. The creator automatically becomes the `admin`. The system will auto-generate a unique `code` (e.g., ORG-A1B2C3).
+
+**Request:** `POST /api/organizations/`
+```json
+{
+  "name": "Ministry of Transport",
+  "description": "National agency responsible for transportation.",
+  "contact_email": "hello@mot.gov.zw",
+  "phone_number": "+263 242 123456",
+  "address": "Kaguvi Building, Central Ave, Harare"
+}
+```
+*(Note: Only `name` is required. The rest are optional.)*
+
+### B. Create a Project
+Creates a project under an organization. The creator automatically becomes the `manager`. The system will auto-generate a unique `code` (e.g., PROJ-X9Y8Z7).
+
+**Request:** `POST /api/projects/`
+```json
+{
+  "name": "Harare Road Maintenance",
+  "organization": "<uuid_of_organization>"
+}
+```
+
+### C. Fetch Projects
+Retrieve all projects the logged-in user has access to across all organizations.
+
+**Request:** `GET /api/projects/`
+
+---
+
+## 3. Team Member Invitations
+You can assign existing users to your Organizations or Projects.
+*Note: If you submit a username that does not exist, the API will return a `400 Bad Request`. The user must register first.*
+
+### A. Invite to Organization (Requires `admin` role)
+**Request:** `POST /api/organizations/<org_uuid>/members/`
+```json
+{
+  "username": "field_officer_john",
+  "role": "member" 
+}
+```
+*(Roles: `admin`, `member`)*
+
+### B. Invite to Project (Requires `manager` or `admin` role)
+**Request:** `POST /api/projects/<project_uuid>/members/`
+```json
+{
+  "username": "field_officer_john",
+  "role": "collector" 
+}
+```
+*(Roles: `manager`, `collector`)*
+
+---
+
+## 4. Form Builder & Creation
+
+### A. Fetch Field Types Blueprint
+Before rendering the drag-and-drop form builder, fetch the exact schema blueprints for all supported field types. This tells your frontend exactly what configuration sidebars to render!
+
+**Request:** `GET /api/forms/field-types/`
+**Response:**
+```json
+[
+  {
+    "category": "Basic",
+    "types": [
+      {
+        "name": "number",
+        "label": "Numeric input",
+        "description": "",
+        "properties_schema": {
+          "min": "number",
+          "max": "number",
+          "decimals": "boolean"
+        }
+      }
+    ]
+  }
+]
+```
+
+### B. Draft a Form
+Save a draft of the form schema under a project.
+
+**Request:** `POST /api/projects/<project_uuid>/forms/`
+```json
+{
+  "title": "Pothole Survey",
+  "description": "Daily tracking of road defects.",
+  "schema": {
+    "fields": [
+      { "name": "road_name", "type": "text", "label": "Road Name" },
+      { "name": "location", "type": "point", "label": "GPS Coordinates" },
+      { "name": "photo", "type": "image", "label": "Defect Photo" }
+    ]
+  }
+}
+```
+
+### C. Fetch & Edit Form Structure (Schema)
+If the web app needs to display or edit an existing form's questions, you can fetch the full form detail, which includes the current `schema`. 
+
+**Request:** `GET /api/forms/<form_uuid>/`
+**Response (abridged):**
+```json
+{
+  "id": "65fa6507...",
+  "title": "Pothole Survey",
+  "status": "draft",
+  "current_version_details": {
+    "schema": {
+      "fields": [
+        { "name": "road_name", "type": "text", "label": "Road Name" }
+      ]
+    }
+  }
+}
+```
+
+To update the form questions, send a `PATCH` request with the new `schema` object:
+**Request:** `PATCH /api/forms/<form_uuid>/`
+```json
+{
+  "schema": {
+    "fields": [
+      { "name": "road_name", "type": "text", "label": "Road Name" },
+      { "name": "severity", "type": "number", "label": "Severity (1-10)" }
+    ]
+  }
+}
+```
+
+### D. Publish Form (Crucial Step!)
+Forms are just drafts until they are published. Publishing triggers the backend to dynamically generate a dedicated, spatial PostGIS table (e.g., `collect_pothole_survey_a1b2c3d4`) to store the submissions.
+
+**Request:** `POST /api/forms/<form_uuid>/publish/`
+
+---
+
+## 5. Data Visualization
+
+### A. Fetch Forms for a Selected Project
+When the user clicks a project, fetch the forms associated with it. 
+Look at the `has_geodata` flag to determine if you need to render a map view or just an attribute table!
+
+**Request:** `GET /api/projects/<project_uuid>/forms/`
+
+### B. Map Visualization (GeoJSON)
+If `has_geodata` is true, call this highly optimized endpoint to fetch *only* the map coordinates. This strips out heavy text/media data so the map renders instantly even with 100,000+ points.
+
+**Request:** `GET /api/web/forms/<form_uuid>/geojson/`
+
+**Response:**
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": { "type": "Point", "coordinates": [31.05, -17.82] },
+      "properties": { "id": 1 }
+    }
+  ]
+}
+```
+
+### C. Attribute Table: Headers & Paginated Data
+To render the grid/table view, fetch the dynamic columns and the paginated data. The paginated data automatically detects and **removes** heavy geometry columns from the payload, so your table loads blazingly fast.
+
+**Request 1 (Headers):** `GET /api/web/forms/<form_uuid>/columns/`
+**Request 2 (Data):** `GET /api/web/forms/<form_uuid>/data/?page=1&limit=50`
+
+**Data Response:**
+```json
+{
+  "total": 142,
+  "page": 1,
+  "limit": 50,
+  "data": [
+    {
+      "id": 1,
+      "synced_at": "2026-05-28T09:30:00Z",
+      "road_name": "Samora Machel Ave",
+      "photo": "http://172.30.5.24:8206/media/uploads/2026/05/pothole1.jpg"
+    }
+  ]
+}
+```
+
+### D. Row Detail View
+When a user clicks a row on the Attribute Table or a pin on the Map, fetch the 100% full detail for that specific record (including geometries).
+
+**Request:** `GET /api/web/forms/<form_uuid>/data/1/`

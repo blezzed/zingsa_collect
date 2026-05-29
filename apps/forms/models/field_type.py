@@ -6,6 +6,7 @@ class FormFieldType(models.Model):
     description = models.TextField(blank=True, help_text="Detailed description of the field's purpose")
     category = models.CharField(max_length=50, help_text="Category for grouping in the UI (e.g. 'Basic', 'GIS', 'Media')")
     is_active = models.BooleanField(default=True, help_text="Whether this field type is currently available for form building")
+    properties_schema = models.JSONField(default=dict, blank=True, help_text="JSON schema dictating what configuration properties are allowed for this field")
     
     class Meta:
         db_table = 'forms_field_type'
