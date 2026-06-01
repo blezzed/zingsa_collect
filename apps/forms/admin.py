@@ -10,7 +10,7 @@ class FormVersionInline(admin.TabularInline):
 @admin.register(Form)
 class FormAdmin(admin.ModelAdmin):
     list_display = ('title', 'project', 'status', 'mode', 'has_geodata', 'created_by', 'created_at')
-    list_filter = ('status', 'mode', 'has_geodata', 'project')
+    list_filter = ('status', 'mode', 'geometry_type', 'project')
     search_fields = ('title', 'slug', 'description')
     readonly_fields = ('slug',)
     inlines = [FormVersionInline]
