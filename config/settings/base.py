@@ -241,10 +241,135 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    "sweep-uncompressed-images": {
+        "task": "apps.mediafiles.tasks.sweep_uncompressed_images",
+        "schedule": crontab(minute=0, hour="*/6"),  # Every 6 hours
+    },
+}
+
 # drf-spectacular Settings
 SPECTACULAR_SETTINGS = {
     'TITLE': 'ZINGSA Collect API',
     'DESCRIPTION': 'Backend API for ZINGSA Collect dynamic data collection application',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+}
+
+# Static files directories
+STATICFILES_DIRS = [
+    BASE_DIR / 'static',
+]
+
+# ─────────────────────────────────────────────────────────
+# Jazzmin Admin Theming — BUIMS Portal style
+# ─────────────────────────────────────────────────────────
+JAZZMIN_SETTINGS = {
+    # Browser tab / window title
+    "site_title": "ZINGSA Collect",
+
+    # Login screen header
+    "site_header": "ZINGSA Collect",
+
+    # Brand text (top-left in sidebar, max ~19 chars)
+    "site_brand": "ZINGSA Collect",
+
+    # Copyright in footer
+    "copyright": "ZINGSA Collect © 2026. All rights reserved.",
+
+    # Welcome text on login page
+    "welcome_sign": "Welcome to ZINGSA Collect",
+
+    # ── Sidebar navigation icons (FontAwesome 5 free) ──
+    "icons": {
+        "accounts.User": "fas fa-users-cog",
+        "auth.Group": "fas fa-shield-alt",
+        "organizations.Organization": "fas fa-building",
+        "projects.Project": "fas fa-project-diagram",
+        "forms.Form": "fas fa-file-alt",
+        "forms.FormVersion": "fas fa-code-branch",
+        "forms.FormFieldType": "fas fa-list-alt",
+        "submissions.Submission": "fas fa-paper-plane",
+        "mediafiles.MediaFile": "fas fa-photo-video",
+        "analytics.AnalyticsEvent": "fas fa-chart-bar",
+        "audittrail.AuditEntry": "fas fa-clipboard-list",
+        "auditlog.LogEntry": "fas fa-history",
+        "django_celery_beat.PeriodicTask": "fas fa-clock",
+        "django_celery_beat.ClockedSchedule": "fas fa-stopwatch",
+        "django_celery_beat.CrontabSchedule": "fas fa-calendar-alt",
+        "django_celery_beat.IntervalSchedule": "fas fa-hourglass-half",
+        "django_celery_beat.SolarSchedule": "fas fa-sun",
+    },
+    "default_icon_parents": "fas fa-folder",
+    "default_icon_children": "fas fa-circle",
+
+    # ── Top-bar links ──
+    "topmenu_links": [
+        {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
+    ],
+
+    # ── Sidebar behaviour ──
+    "show_sidebar": True,
+    "navigation_expanded": True,
+
+    # ── Custom CSS / JS ──
+    "custom_css": "css/admin_custom.css",
+    "custom_js": None,
+
+    # ── Ordering: group models in sidebar by app ──
+    "order_with_respect_to": [
+        "accounts",
+        "organizations",
+        "projects",
+        "forms",
+        "submissions",
+        "mediafiles",
+        "analytics",
+        "audittrail",
+        "auth",
+        "django_celery_beat",
+    ],
+
+    # Hide these models from the sidebar
+    "hide_models": [],
+
+    # Custom dashboard template
+    "custom_links": {},
+
+    # Change list display style
+    "changeform_format": "horizontal_tabs",
+}
+
+JAZZMIN_UI_TWEAKS = {
+    # ── Dark navy sidebar (matches BUIMS) ──
+    "navbar_small_text": False,
+    "footer_small_text": True,
+    "body_small_text": False,
+    "brand_small_text": False,
+    "brand_colour": False,
+    "accent": "accent-primary",
+    "navbar": "navbar-dark",
+    "no_navbar_border": True,
+    "navbar_fixed": True,
+    "layout_boxed": False,
+    "footer_fixed": False,
+    "sidebar_fixed": True,
+    "sidebar": "sidebar-dark-primary",
+    "sidebar_nav_small_text": False,
+    "sidebar_disable_expand": False,
+    "sidebar_nav_child_indent": True,
+    "sidebar_nav_compact_style": False,
+    "sidebar_nav_legacy_style": False,
+    "sidebar_nav_flat_style": False,
+    "theme": "default",
+    "dark_mode_theme": None,
+    "button_classes": {
+        "primary": "btn-primary",
+        "secondary": "btn-secondary",
+        "info": "btn-info",
+        "warning": "btn-warning",
+        "danger": "btn-danger",
+        "success": "btn-success",
+    },
 }

@@ -1,6 +1,8 @@
 import uuid
 from django.db import models
 from django.conf import settings
+from apps.projects.privileges import default_role_privileges
+
 
 class Project(models.Model):
     STATUS_CHOICES = [
@@ -26,6 +28,11 @@ class Project(models.Model):
         related_name='owned_projects'
     )
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='draft')
+    role_privileges = models.JSONField(
+        default=default_role_privileges,
+        blank=True,
+        help_text='Default privileges per project role (manager/collector/viewer).',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

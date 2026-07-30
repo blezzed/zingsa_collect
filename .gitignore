@@ -33,3 +33,14 @@ Thumbs.db
 
 # Docker volumes (local only)
 *.pid
+
+# One-off ops scripts with secrets / local admin helpers (do not commit)
+reset_password.py
+check_omini.py
+check_supers.py
+check_supers.sh
+check_user_details.py
+run_check.sh
+run_load.sh
+run_reset.sh
+load_forms.py

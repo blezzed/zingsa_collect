@@ -4,3 +4,6 @@ class MediafilesConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'apps.mediafiles'
 
+    def ready(self):
+        import apps.mediafiles.signals  # noqa: F401
+

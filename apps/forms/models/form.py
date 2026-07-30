@@ -41,6 +41,7 @@ class Form(models.Model):
         related_name='current_for_forms'
     )
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='draft')
+    is_demo = models.BooleanField(default=False)
     submission_table_name = models.CharField(max_length=255, blank=True, null=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -60,7 +61,14 @@ class Form(models.Model):
 
     @property
     def has_geodata(self):
-        return self.geometry_type != 'none'
+        """True if the form captures geometry (form-level type or spatial questions)."""
+        if self.geometry_type and self.geometry_type != 'none':
+            return True
+        version = self.current_version
+        if not version or not isinstance(getattr(version, 'schema', None), dict):
+            return False
+        from apps.forms.services.question_schema import schema_has_spatial_questions
+        return schema_has_spatial_questions(version.schema.get('questions', []))
 
 
 class FormVersion(models.Model):

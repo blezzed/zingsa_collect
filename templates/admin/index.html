@@ -1,0 +1,223 @@
+{% extends "admin/index.html" %}
+{% load i18n static dashboard_tags %}
+
+{% block content %}
+{% get_dashboard_stats as db_stats %}
+<!-- ═══ BUIMS-Style Command Center Dashboard ═══ -->
+
+<!-- ── Top Bar ── -->
+<div style="background: var(--buims-topbar-bg, #1E293B); margin: -20px -15px 28px; padding: 16px 28px; border-radius: 0 0 var(--buims-radius, 12px) var(--buims-radius, 12px); display: flex; justify-content: space-between; align-items: center;">
+    <div>
+        <h4 style="color: #F8FAFC; margin: 0; font-size: 1.05rem; font-weight: 700; display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-th-large" style="color: #60A5FA;"></i>
+            ZINGSA Collect — Data Collection Platform
+        </h4>
+        <p style="color: #94A3B8; margin: 2px 0 0; font-size: 0.8rem;">Field Survey Coordination &amp; Operations</p>
+    </div>
+</div>
+
+<!-- ── Page Title ── -->
+<div style="margin-bottom: 8px;">
+    <small style="color: var(--buims-text-muted, #94A3B8); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">DASHBOARD / DASHBOARD</small>
+    <h2 style="margin: 2px 0 0; font-size: 1.3rem; font-weight: 700; color: var(--buims-text-primary, #0F172A);">Dashboard Overview</h2>
+</div>
+
+<!-- ── Command Center ── -->
+<div style="background: var(--buims-card-bg, #fff); border-radius: var(--buims-radius, 12px); padding: 28px; box-shadow: var(--buims-shadow, 0 1px 3px rgba(0,0,0,.06)); border: 1px solid var(--buims-border, #E2E8F0); margin-bottom: 24px;">
+
+    <div class="command-center-header">
+        <div>
+            <h2 style="margin: 0;">Command Center</h2>
+            <p class="subtitle">Real-time operational intelligence for Data Collection.</p>
+        </div>
+        <div class="system-status">
+            <span class="status-badge">
+                <span class="status-dot online"></span>
+                System Online
+            </span>
+            <span class="status-badge">
+                <span class="status-dot info"></span>
+                ZINGSA Collect
+            </span>
+        </div>
+    </div>
+
+    <!-- ── Stat Cards ── -->
+    <div class="stat-cards-row" id="statCardsRow">
+        <!-- Cards are injected by JavaScript for animation -->
+    </div>
+</div>
+
+<!-- ── Operational Momentum Chart ── -->
+<div class="activity-section">
+    <div class="activity-header">
+        <h3>
+            <i class="fas fa-chart-line" style="color: var(--buims-accent, #3B82F6);"></i>
+            Operational Momentum
+        </h3>
+        <span class="activity-label">Weekly Activity</span>
+    </div>
+    <div class="chart-placeholder" id="activityChart"></div>
+    <div class="chart-labels" id="chartLabels"></div>
+</div>
+
+<!-- ── Quick Actions ── -->
+<div class="quick-actions">
+    <h3>
+        <i class="fas fa-bolt" style="color: var(--buims-yellow, #F59E0B);"></i>
+        Quick Actions
+    </h3>
+    <div class="quick-actions-grid">
+        <a href="{% url 'admin:projects_project_add' %}" class="quick-action-btn">
+            <span class="action-icon" style="background: #DBEAFE; color: #2563EB;">
+                <i class="fas fa-plus"></i>
+            </span>
+            New Project
+        </a>
+        <a href="{% url 'admin:forms_form_add' %}" class="quick-action-btn">
+            <span class="action-icon" style="background: #D1FAE5; color: #059669;">
+                <i class="fas fa-file-alt"></i>
+            </span>
+            Create Form
+        </a>
+        <a href="{% url 'admin:accounts_user_changelist' %}" class="quick-action-btn">
+            <span class="action-icon" style="background: #F3E8FF; color: #7C3AED;">
+                <i class="fas fa-users"></i>
+            </span>
+            Manage Users
+        </a>
+        <a href="{% url 'admin:organizations_organization_changelist' %}" class="quick-action-btn">
+            <span class="action-icon" style="background: #FEF3C7; color: #D97706;">
+                <i class="fas fa-building"></i>
+            </span>
+            Organizations
+        </a>
+    </div>
+</div>
+
+<!-- ═══ Dashboard JavaScript ═══ -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+
+    // ── Stat Card Data ──
+    const stats = [
+        {
+            label: 'TOTAL PROJECTS',
+            tag: 'Active',
+            tagClass: 'active',
+            icon: 'fas fa-project-diagram',
+            iconColor: '#3B82F6',
+            value: '{{ db_stats.project_count }}',
+            progress: 100,
+            progressColor: '#3B82F6',
+            footerText: '100%',
+            indicatorColor: '#10B981'
+        },
+        {
+            label: 'TOTAL FORMS',
+            tag: 'Published',
+            tagClass: 'impact',
+            icon: 'fas fa-file-alt',
+            iconColor: '#8B5CF6',
+            value: '{{ db_stats.form_count }}',
+            progress: 100,
+            progressColor: '#8B5CF6',
+            footerText: '100%',
+            indicatorColor: '#10B981'
+        },
+        {
+            label: 'SUBMISSIONS',
+            tag: 'Synced',
+            tagClass: 'functional',
+            icon: 'fas fa-paper-plane',
+            iconColor: '#14B8A6',
+            value: '{{ db_stats.submission_count }}',
+            progress: 86,
+            progressColor: '#14B8A6',
+            footerText: '86%',
+            indicatorColor: '#14B8A6'
+        },
+        {
+            label: 'USERS',
+            tag: 'Registered',
+            tagClass: 'pending',
+            icon: 'fas fa-users',
+            iconColor: '#F59E0B',
+            value: '{{ db_stats.user_count }}',
+            progress: 100,
+            progressColor: '#F59E0B',
+            footerText: '100%',
+            indicatorColor: '#10B981'
+        }
+    ];
+
+    const container = document.getElementById('statCardsRow');
+    stats.forEach(function(stat) {
+        const card = document.createElement('div');
+        card.className = 'stat-card';
+        card.innerHTML =
+            '<div class="stat-header">' +
+                '<span class="stat-label">' + stat.label + '</span>' +
+                '<span class="stat-tag ' + stat.tagClass + '">' +
+                    '<i class="fas fa-chart-line" style="font-size:.6rem"></i> ' + stat.tag +
+                '</span>' +
+            '</div>' +
+            '<div class="stat-body">' +
+                '<i class="' + stat.icon + ' stat-icon" style="color:' + stat.iconColor + '"></i>' +
+                '<span class="stat-value">' + stat.value + '</span>' +
+            '</div>' +
+            '<div class="stat-progress">' +
+                '<div class="progress-fill" style="width:0%;background:' + stat.progressColor + '"></div>' +
+            '</div>' +
+            '<div class="stat-progress-footer">' +
+                '<span>' + stat.footerText + '</span>' +
+                '<span class="progress-indicator" style="background:' + stat.indicatorColor + '"></span>' +
+            '</div>';
+        container.appendChild(card);
+    });
+
+    // Animate progress bars
+    setTimeout(function() {
+        document.querySelectorAll('.stat-card').forEach(function(card, i) {
+            var fill = card.querySelector('.progress-fill');
+            if (fill) fill.style.width = stats[i].progress + '%';
+        });
+    }, 300);
+
+    // ── Activity Chart ──
+    const chartData = [3, 5, 2, 7, 4, 6, 3, 8, 5, 4, 6, 2, 7, 5];
+    const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun',
+                       'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const maxVal = Math.max.apply(null, chartData);
+    const chartContainer = document.getElementById('activityChart');
+    const labelsContainer = document.getElementById('chartLabels');
+    const colors = ['#3B82F6', '#60A5FA', '#93C5FD', '#3B82F6', '#60A5FA',
+                    '#93C5FD', '#BFDBFE', '#3B82F6', '#60A5FA', '#93C5FD',
+                    '#3B82F6', '#60A5FA', '#93C5FD', '#BFDBFE'];
+
+    chartData.forEach(function(val, i) {
+        var bar = document.createElement('div');
+        bar.className = 'chart-bar';
+        bar.style.height = '0%';
+        bar.style.background = colors[i % colors.length];
+        bar.title = dayLabels[i] + ': ' + val + ' activities';
+        chartContainer.appendChild(bar);
+
+        var label = document.createElement('span');
+        label.textContent = dayLabels[i];
+        labelsContainer.appendChild(label);
+    });
+
+    // Animate chart bars
+    setTimeout(function() {
+        var bars = chartContainer.querySelectorAll('.chart-bar');
+        bars.forEach(function(bar, i) {
+            setTimeout(function() {
+                bar.style.height = ((chartData[i] / maxVal) * 100) + '%';
+            }, i * 50);
+        });
+    }, 500);
+});
+</script>
+
+{% endblock %}
