@@ -119,12 +119,24 @@ def validate_questions_recursive(questions: list, path: str = "questions") -> No
             validate_questions_recursive(nested, f"{path}[{idx}].questions")
 
 
-def collection_question_columns(version) -> list[tuple[str, str]]:
-    """Returns (question_id, column_name) for top-level collection fields."""
+def collection_question_columns(version) -> list[tuple[dict, str]]:
+    """
+    Returns (question_dict, column_name) for every collection that has a
+    physical JSONB column — including collections nested under groups/sections.
+    """
     if not version or not version.column_mapping:
         return []
     out = []
-    for q in version.schema.get("questions", []):
-        if q.get("type") == "collection" and q.get("id") in version.column_mapping:
-            out.append((q["id"], version.column_mapping[q["id"]]))
+    seen = set()
+    for q in walk_storage_questions(version.schema.get("questions", [])):
+        if (q.get("type") or "").lower() != "collection":
+            continue
+        q_id = q.get("id")
+        if not q_id or q_id not in version.column_mapping:
+            continue
+        col = version.column_mapping[q_id]
+        if col in seen:
+            continue
+        seen.add(col)
+        out.append((q, col))
     return out

@@ -1,5 +1,6 @@
 import uuid
 from django.db import models
+from django.db.models.functions import Lower
 from django.conf import settings
 from apps.projects.privileges import default_role_privileges
 
@@ -39,6 +40,12 @@ class Project(models.Model):
     class Meta:
         db_table = 'collect_project'
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                Lower('name'),
+                name='collect_project_name_ci_uniq',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.code})"

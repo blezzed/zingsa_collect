@@ -2,6 +2,7 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 
 from apps.projects.selectors.project_selectors import get_project_list_selector, get_project_by_id_selector
 from apps.projects.serializers.project_serializers import ProjectSerializer
@@ -11,9 +12,21 @@ from apps.projects.privileges import (
     PRIVILEGE_KEYS,
     PRIVILEGE_LABELS,
     normalize_role_privileges,
+    user_has_project_privilege,
 )
 from apps.projects.serializers.member_serializers import ProjectRolePrivilegesSerializer
 from common.view_helpers import raise_if_missing
+
+
+def _require_project_admin(user, project):
+    """Owner or manage_members (managers) may edit/delete the project."""
+    if getattr(user, "is_superuser", False):
+        return
+    if project.owner_id == user.id:
+        return
+    if user_has_project_privilege(user, project, "manage_members"):
+        return
+    raise PermissionDenied("You do not have permission to change this project.")
 
 
 class ProjectListCreateView(APIView):
@@ -55,6 +68,7 @@ class ProjectDetailView(APIView):
             get_project_by_id_selector(pk, user=request.user),
             'Project not found.',
         )
+        _require_project_admin(request.user, project)
         serializer = ProjectSerializer(
             project, data=request.data, partial=True, context={'request': request}
         )
@@ -70,6 +84,7 @@ class ProjectDetailView(APIView):
             get_project_by_id_selector(pk, user=request.user),
             'Project not found.',
         )
+        _require_project_admin(request.user, project)
         project.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

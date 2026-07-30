@@ -1,4 +1,6 @@
 from rest_framework import serializers
+from django.db.models.functions import Lower
+
 from apps.projects.models import Project
 from apps.projects.privileges import (
     normalize_role_privileges,
@@ -24,6 +26,19 @@ class ProjectSerializer(serializers.ModelSerializer):
             'id', 'code', 'owner', 'role_privileges', 'my_privileges',
             'created_at', 'updated_at'
         ]
+
+    def validate_name(self, value: str) -> str:
+        name = (value or "").strip()
+        if not name:
+            raise serializers.ValidationError("Enter a project name.")
+        qs = Project.objects.annotate(name_ci=Lower("name")).filter(name_ci=name.lower())
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(
+                "A project with this name already exists."
+            )
+        return name
 
     def get_role_privileges(self, obj):
         return normalize_role_privileges(obj.role_privileges)

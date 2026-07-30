@@ -218,8 +218,8 @@ DJOSER = {
     'USER_CREATE_PASSWORD_RETYPE': True,
     'SERIALIZERS': {
         'user_create': 'djoser.serializers.UserCreateSerializer',
-        'user': 'djoser.serializers.UserSerializer',
-        'current_user': 'djoser.serializers.CurrentUserSerializer',
+        'user': 'apps.accounts.serializers.user_serializers.CollectUserSerializer',
+        'current_user': 'apps.accounts.serializers.user_serializers.CollectUserSerializer',
     },
 }
 
