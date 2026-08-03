@@ -34,6 +34,10 @@ Thumbs.db
 # Docker volumes (local only)
 *.pid
 
+# Next.js static export (built via zc_frontend `pnpm build:ux`)
+ux_ui/**
+!ux_ui/.gitkeep
+
 # One-off ops scripts with secrets / local admin helpers (do not commit)
 reset_password.py
 check_omini.py

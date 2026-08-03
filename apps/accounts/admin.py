@@ -11,13 +11,21 @@ class CustomUserAdmin(UserAdmin):
         "email",
         "first_name",
         "last_name",
+        "staff_role",
         "country",
         "sector",
         "is_staff",
         "is_active",
     )
     search_fields = ("username", "email", "first_name", "last_name", "city", "country")
-    list_filter = ("is_staff", "is_superuser", "is_active", "newsletter_opt_in", "groups")
+    list_filter = (
+        "staff_role",
+        "is_staff",
+        "is_superuser",
+        "is_active",
+        "newsletter_opt_in",
+        "groups",
+    )
     fieldsets = UserAdmin.fieldsets + (
         (
             "Collect profile",
@@ -32,5 +40,9 @@ class CustomUserAdmin(UserAdmin):
                     "newsletter_opt_in",
                 )
             },
+        ),
+        (
+            "Platform staff",
+            {"fields": ("staff_role",)},
         ),
     )

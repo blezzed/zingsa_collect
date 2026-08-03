@@ -91,7 +91,12 @@ class WebDataExportView(APIView):
             get_form_by_id_selector(form_id, user=request.user),
             "Form not found.",
         )
-        fmt = (request.query_params.get("format") or "xlsx").lower().strip()
+        # Prefer export_format; also accept format= (URL_FORMAT_OVERRIDE is None).
+        fmt = (
+            request.query_params.get("export_format")
+            or request.query_params.get("format")
+            or "xlsx"
+        ).lower().strip()
         slug = getattr(form, "slug", None) or str(form.id)
 
         if fmt == "geojson":

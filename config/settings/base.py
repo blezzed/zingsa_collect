@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'apps.geospatial',
     'apps.analytics',
     'apps.audittrail',
+    'apps.feedback',
 ]
 
 MIDDLEWARE = [
@@ -146,6 +147,17 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Next.js static export served alongside the API (pnpm build:ux → ../ux_ui/)
+# BASE_DIR is config/; project root is one level up.
+UX_UI_ROOT = BASE_DIR.parent / 'ux_ui'
+_ux_ui_flag = os.environ.get('UX_UI_ENABLED', '').strip().lower()
+if _ux_ui_flag in ('true', '1', 'yes'):
+    UX_UI_ENABLED = True
+elif _ux_ui_flag in ('false', '0', 'no'):
+    UX_UI_ENABLED = False
+else:
+    UX_UI_ENABLED = (UX_UI_ROOT / 'index.html').is_file()
+
 # Storage Configuration (S3 / MinIO via django-storages)
 USE_S3 = os.environ.get('USE_S3', 'False').lower() in ('true', '1')
 
@@ -198,6 +210,9 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'EXCEPTION_HANDLER': 'common.exception_handler.collect_exception_handler',
+    # Keep ?format= for our export APIs (xlsx/csv/...). DRF's default uses
+    # this query param for content negotiation and returns 404 for unknown formats.
+    'URL_FORMAT_OVERRIDE': None,
 }
 
 # SimpleJWT Settings
@@ -217,7 +232,7 @@ DJOSER = {
     'LOGIN_FIELD': 'username',
     'USER_CREATE_PASSWORD_RETYPE': True,
     'SERIALIZERS': {
-        'user_create': 'djoser.serializers.UserCreateSerializer',
+        'user_create': 'apps.accounts.serializers.user_serializers.CollectUserCreateSerializer',
         'user': 'apps.accounts.serializers.user_serializers.CollectUserSerializer',
         'current_user': 'apps.accounts.serializers.user_serializers.CollectUserSerializer',
     },

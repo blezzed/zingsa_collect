@@ -28,7 +28,68 @@ def _is_geojson_geometry(value) -> bool:
     )
 
 
-def _coerce_to_geojson(value):
+def _lat_lng_coord(node):
+    """Return [lng, lat] from a dict, or None."""
+    if not isinstance(node, dict):
+        return None
+    lat = node.get("latitude", node.get("lat"))
+    lng = node.get("longitude", node.get("lng", node.get("lon")))
+    if lat is None or lng is None:
+        return None
+    try:
+        return [float(lng), float(lat)]
+    except (TypeError, ValueError):
+        return None
+
+
+def _coords_from_point_list(points):
+    coords = []
+    if not isinstance(points, list):
+        return coords
+    for item in points:
+        pair = _lat_lng_coord(item)
+        if pair:
+            coords.append(pair)
+    return coords
+
+
+def _geometry_from_coords(coords, expected_type=None):
+    """
+    Build GeoJSON from vertex coords using the form field type when available.
+    Mobile polygon/line capture stores vertices as {points:[{latitude,longitude},...]}.
+    """
+    if not coords:
+        return None
+    et = (expected_type or "").lower()
+
+    if et == "polygon" or (et == "geometry" and len(coords) >= 3):
+        if len(coords) < 3:
+            return None
+        ring = list(coords)
+        if ring[0] != ring[-1]:
+            ring.append(list(ring[0]))
+        return {"type": "Polygon", "coordinates": [ring]}
+
+    if et == "line" or (et == "geometry" and len(coords) >= 2):
+        if len(coords) < 2:
+            return None
+        return {"type": "LineString", "coordinates": coords}
+
+    if et in ("location", "point"):
+        return {"type": "Point", "coordinates": coords[0]}
+
+    # Infer when schema type is missing (deep-scan fallback)
+    if len(coords) >= 3:
+        ring = list(coords)
+        if ring[0] != ring[-1]:
+            ring.append(list(ring[0]))
+        return {"type": "Polygon", "coordinates": [ring]}
+    if len(coords) == 2:
+        return {"type": "LineString", "coordinates": coords}
+    return {"type": "Point", "coordinates": coords[0]}
+
+
+def _coerce_to_geojson(value, expected_type=None):
     """Normalize stored collection/group spatial values into a GeoJSON geometry dict."""
     if value is None or value == "":
         return None
@@ -55,19 +116,42 @@ def _coerce_to_geojson(value):
                         }
                 except ValueError:
                     pass
-            try:
-                geom = GEOSGeometry(stripped)
-                return json.loads(geom.geojson)
-            except Exception:
-                return None
-
-    if isinstance(value, (list, tuple)) and len(value) == 2:
-        try:
-            # Prefer [lng, lat] GeoJSON order; also accept if clearly lat/lng ZA range
-            a, b = float(value[0]), float(value[1])
-            return {"type": "Point", "coordinates": [a, b]}
-        except (TypeError, ValueError):
+            # Only attempt GEOS on values that look like WKT/EWKT/hex EWKB.
+            # Random answer strings must not hit GEOS (it logs ERROR on every miss).
+            upper = stripped.upper()
+            looks_wkt = upper.startswith(
+                (
+                    "POINT",
+                    "LINESTRING",
+                    "POLYGON",
+                    "MULTI",
+                    "GEOMETRYCOLLECTION",
+                    "SRID=",
+                )
+            )
+            looks_hex = len(stripped) >= 18 and all(
+                c in "0123456789abcdefABCDEF" for c in stripped
+            )
+            if looks_wkt or looks_hex:
+                try:
+                    geom = GEOSGeometry(stripped)
+                    return json.loads(geom.geojson)
+                except Exception:
+                    return None
             return None
+
+    if isinstance(value, (list, tuple)):
+        # Mobile may store vertices as a bare list of {lat,lng}
+        if value and isinstance(value[0], dict):
+            coords = _coords_from_point_list(value)
+            if coords:
+                return _geometry_from_coords(coords, expected_type)
+        if len(value) == 2:
+            try:
+                a, b = float(value[0]), float(value[1])
+                return {"type": "Point", "coordinates": [a, b]}
+            except (TypeError, ValueError):
+                return None
 
     if isinstance(value, dict):
         if _is_geojson_geometry(value):
@@ -75,6 +159,13 @@ def _coerce_to_geojson(value):
                 "type": value["type"],
                 "coordinates": value["coordinates"],
             }
+        # Mobile polygon / line: { points: [{latitude, longitude}, ...], timestamp }
+        points = value.get("points")
+        if isinstance(points, list) and points:
+            coords = _coords_from_point_list(points)
+            geom = _geometry_from_coords(coords, expected_type)
+            if geom:
+                return geom
         lat = value.get("latitude", value.get("lat"))
         lng = value.get("longitude", value.get("lng", value.get("lon")))
         if lat is not None and lng is not None:
@@ -153,7 +244,7 @@ def _extract_spatial_from_schema(
             continue
 
         if q_type in SPATIAL_QUESTION_TYPES and q_id:
-            geom = _coerce_to_geojson(answers.get(q_id))
+            geom = _coerce_to_geojson(answers.get(q_id), expected_type=q_type)
             if not geom:
                 continue
             props = {
@@ -167,6 +258,52 @@ def _extract_spatial_from_schema(
                 props["collection_field"] = q_id
             props["feature_key"] = _feature_key(props)
             out.append((geom, props))
+
+
+def _looks_spatial_value(value) -> bool:
+    """True when a nested value is worth feeding to geometry coerce/deep-scan."""
+    if value is None or value == "":
+        return False
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return False
+        if isinstance(value[0], dict):
+            return True
+        if len(value) == 2:
+            try:
+                float(value[0])
+                float(value[1])
+                return True
+            except (TypeError, ValueError):
+                return False
+        return False
+    if isinstance(value, dict):
+        if _is_geojson_geometry(value):
+            return True
+        if isinstance(value.get("points"), list):
+            return True
+        if value.get("latitude", value.get("lat")) is not None and value.get(
+            "longitude", value.get("lng", value.get("lon"))
+        ) is not None:
+            return True
+        return False
+    if isinstance(value, str):
+        stripped = value.strip()
+        upper = stripped.upper()
+        if upper.startswith(
+            (
+                "POINT",
+                "LINESTRING",
+                "POLYGON",
+                "MULTI",
+                "GEOMETRYCOLLECTION",
+                "SRID=",
+            )
+        ):
+            return True
+        if stripped.startswith("{") or stripped.startswith("["):
+            return True
+    return False
 
 
 def _geometries_from_repeat_payload(repeat_items, base_props, collection_question=None):
@@ -187,7 +324,8 @@ def _geometries_from_repeat_payload(repeat_items, base_props, collection_questio
         )
         if features:
             return features
-        # Fall through to deep scan if schema keys did not match stored payload shape
+        # Schema walk found nothing — only deep-scan spatial-looking values
+        # (never feed every text/radio answer into GEOS).
 
     if not isinstance(repeat_items, list):
         return features
@@ -199,18 +337,28 @@ def _geometries_from_repeat_payload(repeat_items, base_props, collection_questio
             return
         if not isinstance(node, dict):
             return
-        geom = _coerce_to_geojson(node)
+        # Prefer whole-node coerce (e.g. {points:[...]} polygon) before
+        # descending into vertex keys like "points".
+        expected = props.get("_expected_type")
+        geom = _coerce_to_geojson(node, expected_type=expected)
         if geom and props.get("_from_field"):
             item_props = {
                 k: v for k, v in props.items() if not k.startswith("_")
             }
             item_props.setdefault("field", props.get("_from_field"))
             item_props.setdefault("field_label", props.get("_from_field"))
+            if expected:
+                item_props.setdefault("question_type", expected)
             item_props["feature_key"] = _feature_key(item_props)
             features.append((geom, item_props))
             return
         for key, val in node.items():
-            coerced = _coerce_to_geojson(val)
+            # Skip raw vertex arrays once parent spatial payload is handled above
+            if key == "points" and isinstance(val, list):
+                continue
+            if not _looks_spatial_value(val):
+                continue
+            coerced = _coerce_to_geojson(val, expected_type=expected)
             if coerced:
                 item_props = {
                     **{k: v for k, v in props.items() if not k.startswith("_")},
@@ -219,6 +367,8 @@ def _geometries_from_repeat_payload(repeat_items, base_props, collection_questio
                     "field_label": props.get("field_label") or key,
                     "source": "collection",
                 }
+                if expected:
+                    item_props.setdefault("question_type", expected)
                 item_props["feature_key"] = _feature_key(item_props)
                 features.append((coerced, item_props))
             elif isinstance(val, (dict, list)):
@@ -303,12 +453,21 @@ def get_web_geojson_service(form, user=None) -> dict:
         return {"type": "FeatureCollection", "features": []}
 
     features = []
-    select_cols = ["id"] + geom_cols + [col for _, col in collection_cols]
-    col_identifiers = [sql.Identifier(c) for c in select_cols]
+    # Prefer ST_AsGeoJSON in SQL so Python/GEOS never parses EWKB (avoids
+    # noisy GEOS_ERROR logs on odd adapter/hex payloads).
+    select_parts = [sql.Identifier("id")]
+    for col in geom_cols:
+        select_parts.append(
+            sql.SQL(
+                "CASE WHEN {c} IS NULL THEN NULL ELSE ST_AsGeoJSON({c}) END"
+            ).format(c=sql.Identifier(col))
+        )
+    for _, col in collection_cols:
+        select_parts.append(sql.Identifier(col))
 
     with connection.cursor() as cursor:
         query = sql.SQL("SELECT {cols} FROM {table}").format(
-            cols=sql.SQL(", ").join(col_identifiers),
+            cols=sql.SQL(", ").join(select_parts),
             table=sql.Identifier(table_name),
         )
         try:
@@ -321,12 +480,17 @@ def get_web_geojson_service(form, user=None) -> dict:
             row_id = row[0]
             base_props = {"id": row_id}
 
-            for i, geom_val in enumerate(row[1:1 + len(geom_cols)]):
-                if not geom_val:
+            for i, geom_json_raw in enumerate(row[1:1 + len(geom_cols)]):
+                if not geom_json_raw:
                     continue
                 try:
-                    geom = GEOSGeometry(geom_val)
-                    geom_json = json.loads(geom.geojson)
+                    geom_json = (
+                        json.loads(geom_json_raw)
+                        if isinstance(geom_json_raw, str)
+                        else geom_json_raw
+                    )
+                    if not isinstance(geom_json, dict) or "type" not in geom_json:
+                        continue
                     group_id, group_label = geom_col_groups[i]
                     props = {
                         **base_props,

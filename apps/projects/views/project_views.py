@@ -3,7 +3,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.pagination import PageNumberPagination
 
+from apps.projects.filters import ProjectFilter
 from apps.projects.selectors.project_selectors import get_project_list_selector, get_project_by_id_selector
 from apps.projects.serializers.project_serializers import ProjectSerializer
 from apps.projects.services.project_services import create_project_service
@@ -29,13 +31,25 @@ def _require_project_admin(user, project):
     raise PermissionDenied("You do not have permission to change this project.")
 
 
+class ProjectPagination(PageNumberPagination):
+    page_size = 12
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
+
 class ProjectListCreateView(APIView):
     permission_classes = [IsAuthenticated]
+    pagination_class = ProjectPagination
 
     def get(self, request):
-        projects = get_project_list_selector(user=request.user)
-        serializer = ProjectSerializer(projects, many=True, context={'request': request})
-        return Response(serializer.data)
+        queryset = get_project_list_selector(user=request.user)
+        filtered = ProjectFilter(request.query_params, queryset=queryset).qs
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(filtered, request, view=self)
+        serializer = ProjectSerializer(
+            page, many=True, context={"request": request}
+        )
+        return paginator.get_paginated_response(serializer.data)
 
     def post(self, request):
         serializer = ProjectSerializer(data=request.data, context={'request': request})
