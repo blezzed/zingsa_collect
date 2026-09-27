@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: zingsa
+  labels:
+    app: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: "REPLACE_WITH_NODE_HOSTNAME"
+      initContainers:
+        - name: ensure-media-bucket
+          image: minio/mc:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: zingsa-env
+            - configMapRef:
+                name: zingsa-app-config
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              until mc alias set local "$AWS_S3_ENDPOINT_URL" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"; do
+                echo "Waiting for MinIO..."
+                sleep 2
+              done
+              mc mb --ignore-existing "local/${AWS_STORAGE_BUCKET_NAME}"
+              mc anonymous set public "local/${AWS_STORAGE_BUCKET_NAME}"
+      containers:
+        - name: worker
+          image: blezzed/zingsa-collect:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/docker/worker-entrypoint.sh"]
+          envFrom:
+            - secretRef:
+                name: zingsa-env
+            - configMapRef:
+                name: zingsa-app-config
+          env:
+            - name: DJANGO_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgis-app
+                  key: username
+            - name: DJANGO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgis-app
+                  key: password
+          volumeMounts:
+            - name: media
+              mountPath: /app/config/media
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: zingsa-media

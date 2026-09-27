@@ -1,0 +1,117 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "**/*.pdf"
+      - "zingsa_db_dump.sql"
+      - "full.json"
+      - "full_clean.json"
+      - "parse_forms.js"
+      - "seed_forms.py"
+      - "seed_demo_forms.py"
+      - "seed_transport_forms.py"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to run on the control plane
+        required: true
+        type: choice
+        default: deploy
+        options:
+          - deploy
+          - apply-config
+          - maintenance
+          - maintenance-off
+          - stop
+          - start
+
+concurrency:
+  group: zingsa-collect-k8s-deploy
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: blezzed/zingsa-collect
+
+jobs:
+  build-and-deploy:
+    runs-on: [self-hosted, linux, zingsa-collect-k3s]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Strip CR from shell scripts
+        run: sed -i 's/\r$//' scripts/k8s-deploy-remote.sh scripts/apply-public-urls.sh scripts/k8s-ops.sh scripts/install-github-runner.sh docker/entrypoint.sh docker/worker-entrypoint.sh docker/beat-entrypoint.sh
+
+      - name: Build image
+        if: github.event_name == 'push' || github.event.inputs.action == 'deploy'
+        run: docker build -t "$IMAGE_NAME:$GITHUB_SHA" -t "$IMAGE_NAME:latest" .
+
+      - name: Deploy to k3s
+        if: github.event_name == 'push' || github.event.inputs.action == 'deploy'
+        env:
+          IMAGE_REF: blezzed/zingsa-collect:${{ github.sha }}
+          K8S_DIR: ${{ github.workspace }}/k8s
+          SKIP_PULL: "1"
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: bash scripts/k8s-deploy-remote.sh
+
+      - name: Apply public URLs
+        if: github.event.inputs.action == 'apply-config'
+        env:
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+        run: bash scripts/apply-public-urls.sh
+
+      - name: Cluster operation
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.action != 'deploy' && github.event.inputs.action != 'apply-config'
+        env:
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+        run: bash scripts/k8s-ops.sh "${{ github.event.inputs.action }}"
+
+  notify:
+    needs: build-and-deploy
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post Slack message
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          ACTION: ${{ github.event.inputs.action || 'deploy' }}
+          RESULT: ${{ needs.build-and-deploy.result }}
+          BRANCH: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          IMAGE: blezzed/zingsa-collect:${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL is empty; skipping Slack notification."
+            exit 0
+          fi
+          python3 - << 'PY'
+          import json
+          import os
+          import urllib.request
+
+          text = "\n".join([
+              "ZINGSA Collect k3s",
+              f"action: {os.environ['ACTION']}",
+              f"result: {os.environ['RESULT']}",
+              f"branch: {os.environ['BRANCH']}",
+              f"actor: {os.environ['ACTOR']}",
+              f"sha: {os.environ['SHA'][:7]}",
+              f"image: {os.environ['IMAGE']}",
+              f"run: {os.environ['RUN_URL']}",
+          ])
+          payload = json.dumps({"text": text}).encode()
+          request = urllib.request.Request(
+              os.environ["SLACK_WEBHOOK_URL"],
+              data=payload,
+              headers={"Content-Type": "application/json"},
+          )
+          urllib.request.urlopen(request, timeout=30)
+          PY

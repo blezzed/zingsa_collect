@@ -1,0 +1,46 @@
+# CloudNativePG runs one primary and two replicas. Preferred anti-affinity
+# lets all three share this single node, and spreads them onto other nodes
+# when those nodes exist. Do not pin these pods with kubernetes.io/hostname.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgis
+  namespace: zingsa
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgis:16-3.4
+  imagePullPolicy: IfNotPresent
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: preferred
+    topologyKey: kubernetes.io/hostname
+  bootstrap:
+    initdb:
+      database: zingsa_collect
+      owner: zingsa_collect
+      secret:
+        name: postgis-app
+      # Runs in template1 before the application database is cloned from it.
+      postInitTemplateSQL:
+        - CREATE EXTENSION IF NOT EXISTS postgis
+        - CREATE EXTENSION IF NOT EXISTS postgis_topology
+        - CREATE EXTENSION IF NOT EXISTS "uuid-ossp"
+        - CREATE EXTENSION IF NOT EXISTS pgcrypto
+  storage:
+    size: 20Gi
+    storageClass: local-path
+  managed:
+    services:
+      additional:
+        - selectorType: rw
+          serviceTemplate:
+            metadata:
+              name: postgis-nodeport
+            spec:
+              type: NodePort
+              ports:
+                - name: postgres
+                  port: 5432
+                  targetPort: 5432
+                  protocol: TCP
+                  nodePort: 30433

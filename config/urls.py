@@ -8,9 +8,16 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from common.maintenance_views import maintenance_bypass, maintenance_bypass_clear
 from common.spa_views import serve_ux_ui
 
 urlpatterns = [
+    path('__owner/maintenance-bypass/', maintenance_bypass, name='maintenance-bypass'),
+    path(
+        '__owner/maintenance-bypass/clear/',
+        maintenance_bypass_clear,
+        name='maintenance-bypass-clear',
+    ),
     path('admin/', admin.site.urls),
 
     # API Schema and Documentation (drf-spectacular)

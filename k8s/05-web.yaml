@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: zingsa
+  labels:
+    app: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: "REPLACE_WITH_NODE_HOSTNAME"
+      initContainers:
+        - name: ensure-media-bucket
+          image: minio/mc:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: zingsa-env
+            - configMapRef:
+                name: zingsa-app-config
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              until mc alias set local "$AWS_S3_ENDPOINT_URL" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"; do
+                echo "Waiting for MinIO..."
+                sleep 2
+              done
+              mc mb --ignore-existing "local/${AWS_STORAGE_BUCKET_NAME}"
+              mc anonymous set public "local/${AWS_STORAGE_BUCKET_NAME}"
+      containers:
+        - name: web
+          image: blezzed/zingsa-collect:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/docker/entrypoint.sh"]
+          ports:
+            - name: http
+              containerPort: 8005
+          envFrom:
+            - secretRef:
+                name: zingsa-env
+            - configMapRef:
+                name: zingsa-app-config
+          env:
+            - name: DJANGO_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgis-app
+                  key: username
+            - name: DJANGO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgis-app
+                  key: password
+          volumeMounts:
+            - name: media
+              mountPath: /app/config/media
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 15
+            failureThreshold: 8
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 180
+            periodSeconds: 20
+            failureThreshold: 8
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: zingsa-media
+---
+# Stable NodePort. Do not use 30105; another app on this node already publishes it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: zingsa
+  labels:
+    app: web
+spec:
+  type: NodePort
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 8005
+      targetPort: http
+      nodePort: 30206

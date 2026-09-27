@@ -1,0 +1,33 @@
+# Non-secret runtime config. Secrets live in the zingsa-env Secret.
+# Public URL is the LAN address used everywhere in this repo plus the web NodePort.
+# If the node has a different public IP or a separate frontend host, edit those
+# keys and run scripts/apply-public-urls.sh.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zingsa-app-config
+  namespace: zingsa
+data:
+  IN_DOCKER: "1"
+  DJANGO_DEBUG: "False"
+  # NodePort is plain HTTP, so session and CSRF cookies must not be Secure.
+  SESSION_COOKIE_SECURE: "False"
+  CSRF_COOKIE_SECURE: "False"
+  # CloudNativePG primary service. Replicas are postgis-ro; writes and migrations use -rw.
+  DJANGO_DB_HOST: "postgis-rw"
+  DJANGO_DB_PORT: "5432"
+  DJANGO_DB_NAME: "zingsa_collect"
+  REDIS_URL: "redis://redis:6379/0"
+  CELERY_BROKER_URL: "redis://redis:6379/1"
+  CELERY_RESULT_BACKEND: "redis://redis:6379/2"
+  DJANGO_ALLOWED_HOSTS: "172.30.5.24,localhost,127.0.0.1"
+  DJANGO_CSRF_TRUSTED_ORIGINS: "http://172.30.5.24:30206,http://localhost:30206,http://127.0.0.1:30206"
+  # The Next.js export is served by this same web Service, so the frontend origin matches the API.
+  FRONTEND_URL: "http://172.30.5.24:30206"
+  SITE_URL: "http://172.30.5.24:30206"
+  TIME_ZONE: "Africa/Harare"
+  USE_S3: "True"
+  AWS_S3_ENDPOINT_URL: "http://minio:9000"
+  AWS_STORAGE_BUCKET_NAME: "zingsa-collect-media"
+  # Browser-facing MinIO API NodePort (30918), not the in-cluster port.
+  AWS_S3_CUSTOM_DOMAIN: "172.30.5.24:30918/zingsa-collect-media"
