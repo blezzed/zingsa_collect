@@ -49,3 +49,13 @@ class CanManageStaff(BasePermission):
             and user.is_authenticated
             and getattr(user, "can_manage_staff", lambda: False)()
         )
+
+
+class IsDeveloper(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and getattr(user, "is_developer", lambda: False)()
+        )

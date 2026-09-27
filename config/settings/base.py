@@ -23,10 +23,24 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-m-m95xk59(-wt)
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('true', '1')
 
-ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,172.30.5.24,*').split(',')
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.environ.get(
+        'DJANGO_ALLOWED_HOSTS',
+        'localhost,127.0.0.1,172.16.3.24,41.174.184.62,*',
+    ).split(',')
+    if h.strip()
+]
 
-_csrf_origins = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '')
-CSRF_TRUSTED_ORIGINS = [item.strip() for item in _csrf_origins.split(',') if item.strip()]
+# Trusted origins for CSRF (session/admin); include internal + external app URLs.
+CSRF_TRUSTED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get(
+        'DJANGO_CSRF_TRUSTED_ORIGINS',
+        'http://172.16.3.24:8206,http://41.174.184.62:8206,http://localhost:8206,http://127.0.0.1:8206',
+    ).split(',')
+    if o.strip()
+]
 
 # HTTP NodePort does not terminate TLS. Set these true only behind HTTPS.
 SESSION_COOKIE_SECURE = env_bool('SESSION_COOKIE_SECURE', False)
@@ -90,6 +104,7 @@ INSTALLED_APPS = [
     'apps.analytics',
     'apps.audittrail',
     'apps.feedback',
+    'apps.releases',
 ]
 
 MIDDLEWARE = [
@@ -187,14 +202,35 @@ else:
     UX_UI_ENABLED = (UX_UI_ROOT / 'index.html').is_file()
 
 # Storage Configuration (S3 / MinIO via django-storages)
+# Per-user cap for uploaded media (photos, files). Default 10 GiB.
+_raw_user_quota = os.environ.get("USER_STORAGE_QUOTA_BYTES", "").strip()
+USER_STORAGE_QUOTA_BYTES = (
+    int(_raw_user_quota) if _raw_user_quota else 10 * 1024 * 1024 * 1024
+)
+_raw_apk_max = os.environ.get("APK_MAX_BYTES", "").strip()
+APK_MAX_BYTES = (
+    int(_raw_apk_max) if _raw_apk_max else 200 * 1024 * 1024
+)
 USE_S3 = os.environ.get('USE_S3', 'False').lower() in ('true', '1')
+# When True (default), browser media URLs are rewritten to same-origin
+# /minio/<bucket>/... so LAN + public IP both work without hardcoding a host.
+PUBLIC_MEDIA_RELATIVE = os.environ.get('PUBLIC_MEDIA_RELATIVE', 'True').lower() in (
+    'true', '1', 'yes', 'on',
+)
 
 if USE_S3:
     AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
     AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME')
+    # Internal Docker / server-side endpoint (boto3). Prefer minio:9000 in compose.
     AWS_S3_ENDPOINT_URL = os.environ.get('AWS_S3_ENDPOINT_URL')
+    # Browser-facing public base (host:port/path). Prefer the Django /minio/
+    # proxy on :8206 when MinIO :9018 is firewalled from client PCs.
     AWS_S3_CUSTOM_DOMAIN = os.environ.get('AWS_S3_CUSTOM_DOMAIN') or None
+    MINIO_PROXY_UPSTREAM = os.environ.get(
+        'MINIO_PROXY_UPSTREAM',
+        'http://minio:9000' if os.environ.get('IN_DOCKER') else (AWS_S3_ENDPOINT_URL or 'http://127.0.0.1:9018'),
+    )
     AWS_S3_FILE_OVERWRITE = False
     AWS_S3_SIGNATURE_VERSION = 's3v4'
     AWS_QUERYSTRING_AUTH = False          # public bucket — no signed URLs
@@ -261,6 +297,7 @@ DJOSER = {
     'USER_CREATE_PASSWORD_RETYPE': True,
     'SERIALIZERS': {
         'user_create': 'apps.accounts.serializers.user_serializers.CollectUserCreateSerializer',
+        'user_create_password_retype': 'apps.accounts.serializers.user_serializers.CollectUserCreateSerializer',
         'user': 'apps.accounts.serializers.user_serializers.CollectUserSerializer',
         'current_user': 'apps.accounts.serializers.user_serializers.CollectUserSerializer',
     },
