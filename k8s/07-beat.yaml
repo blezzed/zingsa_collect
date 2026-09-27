@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beat
+  namespace: zingsa
+  labels:
+    app: beat
+spec:
+  # Celery beat must stay at 1 replica. A second scheduler would fire jobs twice.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: beat
+  template:
+    metadata:
+      labels:
+        app: beat
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: "REPLACE_WITH_NODE_HOSTNAME"
+      containers:
+        - name: beat
+          image: blezzed/zingsa-collect:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/docker/beat-entrypoint.sh"]
+          envFrom:
+            - secretRef:
+                name: zingsa-env
+            - configMapRef:
+                name: zingsa-app-config

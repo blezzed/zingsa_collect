@@ -1,9 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
-echo "Waiting for database…"
-until python -c "import psycopg2, os; psycopg2.connect(dbname=os.getenv('DJANGO_DB_NAME','zingsa_collect'), user=os.getenv('DJANGO_DB_USER','zingsa_collect'), password=os.getenv('DJANGO_DB_PASSWORD','zingsa_collect'), host='postgis', port=int('5432')).close()" 2>/dev/null; do
-  echo "Waiting for database…"
+echo "Waiting for database..."
+until python - << 'PYCODE'
+import os
+import psycopg2
+
+conn = psycopg2.connect(
+    dbname=os.getenv("DJANGO_DB_NAME", "zingsa_collect"),
+    user=os.getenv("DJANGO_DB_USER", "zingsa_collect"),
+    password=os.getenv("DJANGO_DB_PASSWORD", "zingsa_collect"),
+    host=os.getenv("DJANGO_DB_HOST", "postgis"),
+    port=int(os.getenv("DJANGO_DB_PORT", "5432")),
+)
+conn.close()
+PYCODE
+do
+  echo "Database is unavailable - sleeping"
   sleep 2
 done
 

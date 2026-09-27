@@ -9,6 +9,8 @@ from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
 
+from common.env import env_bool, env_int
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -22,6 +24,30 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-m-m95xk59(-wt)
 DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('true', '1')
 
 ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1,172.30.5.24,*').split(',')
+
+_csrf_origins = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '')
+CSRF_TRUSTED_ORIGINS = [item.strip() for item in _csrf_origins.split(',') if item.strip()]
+
+# HTTP NodePort does not terminate TLS. Set these true only behind HTTPS.
+SESSION_COOKIE_SECURE = env_bool('SESSION_COOKIE_SECURE', False)
+CSRF_COOKIE_SECURE = env_bool('CSRF_COOKIE_SECURE', False)
+
+# Owner kill switch. MAINTENANCE_MODE is toggled with kubectl set env, not an image rebuild.
+MAINTENANCE_MODE = env_bool('MAINTENANCE_MODE', False)
+MAINTENANCE_OWNER_TOKEN = os.environ.get('MAINTENANCE_OWNER_TOKEN', '')
+MAINTENANCE_MESSAGE = os.environ.get(
+    'MAINTENANCE_MESSAGE',
+    'ZINGSA Collect is temporarily unavailable while maintenance is in progress.',
+)
+MAINTENANCE_RETRY_AFTER = env_int('MAINTENANCE_RETRY_AFTER', 300)
+MAINTENANCE_BYPASS_COOKIE_NAME = os.environ.get(
+    'MAINTENANCE_BYPASS_COOKIE_NAME',
+    'zingsa_collect_maintenance_bypass',
+)
+MAINTENANCE_BYPASS_COOKIE_MAX_AGE = env_int('MAINTENANCE_BYPASS_COOKIE_MAX_AGE', 7 * 24 * 60 * 60)
+
+SITE_URL = os.environ.get('SITE_URL', '')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', '')
 
 # Windows-specific GDAL/GEOS configuration (bypassed when running in Docker)
 if os.name == 'nt' and not os.environ.get('IN_DOCKER'):
@@ -69,6 +95,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',  # Put CorsMiddleware as high as possible
     'django.middleware.security.SecurityMiddleware',
+    'common.maintenance_middleware.MaintenanceModeMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -84,7 +111,8 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates'],
+        # BASE_DIR is config/; project templates live one level up (templates/admin, templates/maintenance.html).
+        'DIRS': [BASE_DIR.parent / 'templates', BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [

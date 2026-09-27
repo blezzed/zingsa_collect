@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: zingsa
+resources:
+  - 00-namespace.yaml
+  - 01-configmap.yaml
+  - 02-postgis.yaml
+  - 04-redis.yaml
+  - 05-web.yaml
+  - 06-worker.yaml
+  - 07-beat.yaml
+  - 11-media-pvc.yaml
+  - 12-minio.yaml
+images:
+  - name: blezzed/zingsa-collect
+    newName: blezzed/zingsa-collect
+    newTag: latest

@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgis-init
+  namespace: zingsa
+data:
+  01-multi-db.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "=== [PostGIS init] Setting up ZINGSA Collect database and user ==="
+
+    create_or_alter_user() {
+      local user="$1" pass="$2"
+      psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+        "SELECT 1 FROM pg_roles WHERE rolname='${user}'" | grep -q 1 \
+        || psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+           "CREATE USER ${user} WITH PASSWORD '${pass}';"
+      psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+        "ALTER USER ${user} WITH PASSWORD '${pass}';"
+    }
+
+    create_db_if_missing() {
+      local db="$1" owner="$2"
+      psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+        "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1 \
+        || psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+           "CREATE DATABASE ${db} OWNER ${owner};"
+    }
+
+    : "${DJANGO_DB_NAME:?DJANGO_DB_NAME is required}"
+    : "${DJANGO_DB_USER:?DJANGO_DB_USER is required}"
+    : "${DJANGO_DB_PASSWORD:?DJANGO_DB_PASSWORD is required}"
+
+    create_or_alter_user "${DJANGO_DB_USER}" "${DJANGO_DB_PASSWORD}"
+    create_db_if_missing "${DJANGO_DB_NAME}" "${DJANGO_DB_USER}"
+
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "${DJANGO_DB_NAME}" -c \
+      'CREATE EXTENSION IF NOT EXISTS "postgis";
+       CREATE EXTENSION IF NOT EXISTS "postgis_topology";
+       CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+       CREATE EXTENSION IF NOT EXISTS "pgcrypto";'
+
+    echo "=== [PostGIS init] Done ==="
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgis-data
+  namespace: zingsa
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgis
+  namespace: zingsa
+  labels:
+    app: postgis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgis
+  template:
+    metadata:
+      labels:
+        app: postgis
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: "REPLACE_WITH_NODE_HOSTNAME"
+      containers:
+        - name: postgis
+          image: postgis/postgis:16-3.4
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: postgres
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zingsa-env
+                  key: POSTGRES_PASSWORD
+            - name: DJANGO_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: zingsa-env
+                  key: DJANGO_DB_NAME
+            - name: DJANGO_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: zingsa-env
+                  key: DJANGO_DB_USER
+            - name: DJANGO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zingsa-env
+                  key: DJANGO_DB_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+          readinessProbe:
+            tcpSocket:
+              port: postgres
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: postgres
+            initialDelaySeconds: 40
+            periodSeconds: 20
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgis-data
+        - name: init
+          configMap:
+            name: postgis-init
+            defaultMode: 0755
+---
+# Optional external Postgres port. Do not use 30432; another app on this node uses it.
+# Firewall 30433 so only admin hosts can connect. In-cluster clients use postgis:5432.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgis
+  namespace: zingsa
+  labels:
+    app: postgis
+spec:
+  type: NodePort
+  selector:
+    app: postgis
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      nodePort: 30433
