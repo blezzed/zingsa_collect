@@ -6,6 +6,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 
 from apps.mediafiles.models import MediaFile
 from apps.mediafiles.serializers.media_serializers import MediaFileSerializer
+from apps.accounts.selectors.usage_selectors import assert_within_storage_quota
 from common.exceptions import ValidationFailed
 
 
@@ -28,6 +29,8 @@ class MediaUploadView(APIView):
                     ],
                 },
             )
+
+        assert_within_storage_quota(request.user, uploaded_file.size)
 
         media_file = MediaFile(
             file=uploaded_file,

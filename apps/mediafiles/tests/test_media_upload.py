@@ -1,6 +1,6 @@
-import io
 from django.urls import reverse
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -42,3 +42,43 @@ class MediaUploadTests(APITestCase):
         url = reverse('mediafiles:upload')
         response = self.client.post(url, {}, format='multipart')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_upload_rejected_when_quota_exceeded(self):
+        url = reverse('mediafiles:upload')
+        existing = SimpleUploadedFile(
+            name='existing.bin',
+            content=b'x' * 80,
+            content_type='application/octet-stream',
+        )
+        MediaFile.objects.create(
+            file=existing,
+            original_name='existing.bin',
+            file_type='application/octet-stream',
+            file_size=80,
+            uploaded_by=self.user,
+        )
+
+        incoming = SimpleUploadedFile(
+            name='too_big.bin',
+            content=b'y' * 30,
+            content_type='application/octet-stream',
+        )
+        with override_settings(USER_STORAGE_QUOTA_BYTES=100):
+            response = self.client.post(url, {'file': incoming}, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(MediaFile.objects.filter(uploaded_by=self.user).count(), 1)
+        self.assertIn('quota', str(response.data).lower())
+
+    def test_upload_allowed_when_under_quota(self):
+        url = reverse('mediafiles:upload')
+        incoming = SimpleUploadedFile(
+            name='ok.bin',
+            content=b'z' * 20,
+            content_type='application/octet-stream',
+        )
+        with override_settings(USER_STORAGE_QUOTA_BYTES=100):
+            response = self.client.post(url, {'file': incoming}, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(MediaFile.objects.filter(uploaded_by=self.user).count(), 1)

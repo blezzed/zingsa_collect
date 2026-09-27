@@ -7,7 +7,7 @@ Requires: pip install requests
 Usage:
     python seed_forms.py
     python seed_forms.py --forms-dir "E:\\Downloads\\FORMS (1)\\FORMS"
-    python seed_forms.py --base-url http://172.30.5.24:8206
+    python seed_forms.py --base-url http://172.16.3.24:8206
 """
 
 from __future__ import annotations

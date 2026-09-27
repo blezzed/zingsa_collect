@@ -5,14 +5,15 @@ from apps.feedback.models import Feedback
 
 
 class FeedbackFilter(django_filters.FilterSet):
-    """Filter feedback with `?search=` and `?category=`."""
+    """Filter feedback with `?search=`, `?category=`, and `?status=`."""
 
     search = django_filters.CharFilter(method="filter_search")
     category = django_filters.ChoiceFilter(choices=Feedback.Category.choices)
+    status = django_filters.ChoiceFilter(choices=Feedback.Status.choices)
 
     class Meta:
         model = Feedback
-        fields = ["category"]
+        fields = ["category", "status"]
 
     def filter_search(self, queryset, name, value):
         term = (value or "").strip()
@@ -22,5 +23,6 @@ class FeedbackFilter(django_filters.FilterSet):
             Q(subject__icontains=term)
             | Q(message__icontains=term)
             | Q(user__username__icontains=term)
+            | Q(user__email__icontains=term)
             | Q(page_url__icontains=term)
         )

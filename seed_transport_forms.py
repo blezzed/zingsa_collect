@@ -6,7 +6,7 @@ Requires: pip install requests
 
 Usage:
     python seed_transport_forms.py
-    python seed_transport_forms.py --base-url http://172.30.5.24:8206
+    python seed_transport_forms.py --base-url http://172.16.3.24:8206
 """
 
 from __future__ import annotations

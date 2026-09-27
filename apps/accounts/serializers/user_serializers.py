@@ -1,5 +1,7 @@
 from django.contrib.auth import get_user_model
-from djoser.serializers import UserCreateSerializer as DjoserUserCreateSerializer
+from djoser.serializers import (
+    UserCreatePasswordRetypeSerializer as DjoserUserCreatePasswordRetypeSerializer,
+)
 from djoser.serializers import UserSerializer as DjoserUserSerializer
 from rest_framework import serializers
 
@@ -50,14 +52,20 @@ class UserSuggestSerializer(serializers.ModelSerializer):
         fields = ["id", "username", "email", "first_name", "last_name"]
 
 
-class CollectUserCreateSerializer(DjoserUserCreateSerializer):
-    """Djoser user create with Collect profile fields at signup."""
+class CollectUserCreateSerializer(DjoserUserCreatePasswordRetypeSerializer):
+    """Djoser user create with Collect profile fields at signup.
 
-    class Meta(DjoserUserCreateSerializer.Meta):
+    USER_CREATE_PASSWORD_RETYPE uses the ``user_create_password_retype``
+    serializer, not ``user_create``. Extra profile fields must live here or
+    first/last name (and country/sector) are silently dropped.
+    """
+
+    class Meta(DjoserUserCreatePasswordRetypeSerializer.Meta):
         model = User
         fields = tuple(
             dict.fromkeys(
-                tuple(DjoserUserCreateSerializer.Meta.fields) + CREATE_PROFILE_FIELDS
+                tuple(DjoserUserCreatePasswordRetypeSerializer.Meta.fields)
+                + CREATE_PROFILE_FIELDS
             )
         )
 
@@ -207,6 +215,14 @@ class StaffUpdateSerializer(serializers.Serializer):
 
 
 class EndUserAdminSerializer(serializers.ModelSerializer):
+    owned_project_count = serializers.SerializerMethodField()
+    member_project_count = serializers.SerializerMethodField()
+    storage_bytes = serializers.SerializerMethodField()
+    storage_quota_bytes = serializers.SerializerMethodField()
+    file_count = serializers.SerializerMethodField()
+    submission_count = serializers.SerializerMethodField()
+    organizations = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
@@ -219,9 +235,75 @@ class EndUserAdminSerializer(serializers.ModelSerializer):
             "date_joined",
             "last_login",
             "country",
+            "city",
             "sector",
+            "organization_type",
+            "owned_project_count",
+            "member_project_count",
+            "storage_bytes",
+            "storage_quota_bytes",
+            "file_count",
+            "submission_count",
+            "organizations",
         ]
         read_only_fields = fields
+
+    def get_owned_project_count(self, obj) -> int:
+        value = getattr(obj, "owned_project_count", None)
+        if value is not None:
+            return int(value)
+        return obj.owned_projects.count()
+
+    def get_member_project_count(self, obj) -> int:
+        value = getattr(obj, "member_project_count", None)
+        if value is not None:
+            return int(value)
+        return (
+            obj.project_memberships.exclude(project__owner_id=obj.id)
+            .count()
+        )
+
+    def get_storage_bytes(self, obj) -> int:
+        value = getattr(obj, "storage_bytes", None)
+        if value is not None:
+            return int(value)
+        from django.db.models import Sum
+        from apps.mediafiles.models import MediaFile
+
+        total = MediaFile.objects.filter(uploaded_by=obj).aggregate(
+            total=Sum("file_size")
+        )["total"]
+        return int(total or 0)
+
+    def get_storage_quota_bytes(self, obj) -> int:
+        from apps.accounts.selectors.usage_selectors import (
+            get_user_storage_quota_bytes,
+        )
+
+        return get_user_storage_quota_bytes()
+
+    def get_file_count(self, obj) -> int:
+        value = getattr(obj, "file_count", None)
+        if value is not None:
+            return int(value)
+        return obj.media_files.count()
+
+    def get_submission_count(self, obj) -> int:
+        value = getattr(obj, "submission_count", None)
+        if value is not None:
+            return int(value)
+        return obj.submissions.count()
+
+    def get_organizations(self, obj) -> list:
+        rows = getattr(obj, "organization_memberships").all()
+        return [
+            {
+                "id": str(row.organization_id),
+                "name": row.organization.name,
+                "role": row.role,
+            }
+            for row in rows
+        ]
 
 
 class EndUserAdminUpdateSerializer(serializers.Serializer):

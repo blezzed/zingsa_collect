@@ -10,6 +10,12 @@ class Feedback(models.Model):
         IMPROVEMENT = "improvement", "Improvement"
         OTHER = "other", "Other"
 
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        IN_PROGRESS = "in_progress", "In progress"
+        SOLVED = "solved", "Solved"
+        IGNORED = "ignored", "Ignored"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -21,9 +27,24 @@ class Feedback(models.Model):
         choices=Category.choices,
         default=Category.IMPROVEMENT,
     )
+    status = models.CharField(
+        max_length=32,
+        choices=Status.choices,
+        default=Status.OPEN,
+        db_index=True,
+    )
     subject = models.CharField(max_length=200)
     message = models.TextField()
     page_url = models.CharField(max_length=500, blank=True, default="")
+    status_note = models.TextField(blank=True, default="")
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resolved_feedback_items",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

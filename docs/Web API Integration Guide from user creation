@@ -2,7 +2,7 @@
 
 This document outlines the complete sequence of API calls the web frontend should make to authenticate, manage workspaces (Orgs/Projects/Members), design forms, and visualize the submitted data on maps and attribute tables.
 
-All examples assume the backend is running at `http://172.30.5.24:8206`.
+All examples assume the backend is running at `http://172.16.3.24:8206`.
 
 ---
 
@@ -250,7 +250,7 @@ To render the grid/table view, fetch the dynamic columns and the paginated data.
       "id": 1,
       "synced_at": "2026-05-28T09:30:00Z",
       "road_name": "Samora Machel Ave",
-      "photo": "http://172.30.5.24:8206/media/uploads/2026/05/pothole1.jpg"
+      "photo": "http://172.16.3.24:8206/media/uploads/2026/05/pothole1.jpg"
     }
   ]
 }

@@ -143,7 +143,11 @@ class AvailableFormsView(APIView):
     def get(self, request):
         project_code = request.query_params.get('project_code')
         is_demo_only = not request.user.is_authenticated
-        forms = get_available_forms_service(project_code=project_code, is_demo_only=is_demo_only)
+        forms = get_available_forms_service(
+            project_code=project_code,
+            is_demo_only=is_demo_only,
+            user=request.user,
+        )
         serializer = FormSerializer(forms, many=True, context={'published_only': True})
         return Response(serializer.data)
 
@@ -153,5 +157,9 @@ class FormDownloadView(APIView):
 
     def get(self, request, pk):
         is_demo_only = not request.user.is_authenticated
-        definition = download_form_definition_service(str(pk), is_demo_only=is_demo_only)
+        definition = download_form_definition_service(
+            str(pk),
+            is_demo_only=is_demo_only,
+            user=request.user,
+        )
         return Response(definition)

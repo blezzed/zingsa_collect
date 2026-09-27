@@ -7,7 +7,12 @@ from rest_framework.exceptions import ValidationError
 from psycopg2 import sql
 
 from apps.submissions.models import SubmissionIndex, SubmissionMedia
-from apps.forms.services.form_services import generate_column_mapping_service
+from apps.forms.services.form_services import (
+    generate_column_mapping_service,
+    get_live_submission_version,
+    list_physical_table_columns,
+    physical_table_exists,
+)
 
 def parse_geometry(val, col_type: str) -> str:
     """
@@ -72,14 +77,31 @@ def sync_submission_to_physical_table_service(
     
     if existing:
         return existing, True
-        
-    table_name = form_version.physical_table_name
+
+    write_version = get_live_submission_version(form, fallback=form_version)
+    table_name = getattr(write_version, "physical_table_name", None) if write_version else None
+    if not table_name:
+        table_name = form_version.physical_table_name
+        write_version = form_version
     if not table_name:
         raise ValidationError(f"Form version '{form_version.id}' does not have a physical table mapped.")
-        
-    column_mapping = form_version.column_mapping
-    questions = form_version.schema.get('questions', [])
-    
+
+    # Write into the live published table so the submissions grid sees rows
+    # from collectors still on an older downloaded version.
+    column_mapping = {
+        **(form_version.column_mapping or {}),
+        **(getattr(write_version, "column_mapping", None) or {}),
+    }
+    live_cols = set(list_physical_table_columns(table_name))
+    if live_cols:
+        column_mapping = {
+            q_id: col for q_id, col in column_mapping.items() if col in live_cols
+        }
+
+    questions = list((form_version.schema or {}).get("questions", []))
+    if write_version is not None and write_version.id != form_version.id:
+        questions.extend((write_version.schema or {}).get("questions", []))
+
     # Generate column types to parse geometry columns
     _, db_types = generate_column_mapping_service(questions)
     
@@ -149,3 +171,87 @@ def sync_submission_to_physical_table_service(
     )
     
     return submission_index, False
+
+
+def copy_missing_submissions_to_live_table(form) -> int:
+    """
+    Copy rows that still live only on older version tables into the live
+    submissions table, and retarget SubmissionIndex at the new row ids.
+    """
+    live_table = form.submission_table_name
+    if not live_table or not physical_table_exists(live_table):
+        return 0
+
+    live_cols = list_physical_table_columns(live_table)
+    if "submission_uuid" not in live_cols:
+        return 0
+
+    copied = 0
+    versions = form.versions.exclude(physical_table_name__isnull=True).exclude(
+        physical_table_name=""
+    )
+    for version in versions:
+        old_table = version.physical_table_name
+        if not old_table or old_table == live_table:
+            continue
+        if not physical_table_exists(old_table):
+            continue
+        old_cols = set(list_physical_table_columns(old_table))
+        copy_cols = [col for col in live_cols if col != "id" and col in old_cols]
+        if "submission_uuid" not in copy_cols:
+            continue
+
+        insert_cols = sql.SQL(", ").join(sql.Identifier(c) for c in copy_cols)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL(
+                    """
+                    INSERT INTO {live} ({cols})
+                    SELECT {cols}
+                    FROM {old} AS src
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM {live} AS dest
+                        WHERE dest.submission_uuid = src.submission_uuid
+                    )
+                    RETURNING submission_uuid, id
+                    """
+                ).format(
+                    live=sql.Identifier(live_table),
+                    old=sql.Identifier(old_table),
+                    cols=insert_cols,
+                )
+            )
+            new_rows = cursor.fetchall()
+
+        if not new_rows:
+            continue
+
+        uuid_to_new_id = {str(sub_uuid): new_id for sub_uuid, new_id in new_rows}
+        with connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL(
+                    "SELECT id, submission_uuid FROM {old} WHERE submission_uuid IN ({uuids})"
+                ).format(
+                    old=sql.Identifier(old_table),
+                    uuids=sql.SQL(", ").join(
+                        sql.Placeholder() for _ in uuid_to_new_id
+                    ),
+                ),
+                list(uuid_to_new_id.keys()),
+            )
+            old_id_rows = cursor.fetchall()
+
+        for old_id, sub_uuid in old_id_rows:
+            new_id = uuid_to_new_id.get(str(sub_uuid))
+            if new_id is None:
+                continue
+            SubmissionIndex.objects.filter(
+                form=form,
+                physical_table_name=old_table,
+                physical_row_id=old_id,
+            ).update(
+                physical_table_name=live_table,
+                physical_row_id=new_id,
+            )
+        copied += len(new_rows)
+    return copied

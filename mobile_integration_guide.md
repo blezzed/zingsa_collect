@@ -2,7 +2,7 @@
 
 This document outlines the end-to-end API integration flow for the mobile application (Flutter/Android/iOS) to communicate with the ZINGSA Collect backend. 
 
-The backend runs on `http://172.30.5.24:8206` (or your production domain).
+The backend runs on `http://172.16.3.24:8206` (or your production domain).
 
 ---
 
@@ -112,7 +112,7 @@ Uploads a single media file.
 ```json
 {
     "id": "b78d91c2...",
-    "url": "http://172.30.5.24:8206/media/uploads/2026/05/pothole1.jpg",
+    "url": "http://172.16.3.24:8206/media/uploads/2026/05/pothole1.jpg",
     "original_name": "pothole1.jpg",
     "file_type": "image/jpeg",
     "file_size": 2048576,
@@ -138,7 +138,7 @@ Syncs multiple records in a single atomic transaction.
       "form_version_id": "v123-uuid",
       "answers": {
         "road_segment_id": "SEG-001",
-        "defect_photo": "http://172.30.5.24:8206/media/uploads/2026/05/pothole1.jpg"
+        "defect_photo": "http://172.16.3.24:8206/media/uploads/2026/05/pothole1.jpg"
       }
     },
     {

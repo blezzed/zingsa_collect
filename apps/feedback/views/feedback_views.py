@@ -1,4 +1,5 @@
 from rest_framework import status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -10,12 +11,14 @@ from apps.feedback.serializers.feedback_serializers import FeedbackSerializer
 from apps.feedback.services.feedback_services import (
     create_feedback_service,
     list_feedback_for_user,
+    update_feedback_status_service,
 )
-from common.view_helpers import require_non_empty_string
+from common.exceptions import ValidationFailed
+from common.view_helpers import raise_if_missing, require_non_empty_string
 
 
 class FeedbackPagination(PageNumberPagination):
-    page_size = 10
+    page_size = 8
     page_size_query_param = "page_size"
     max_page_size = 50
 
@@ -61,3 +64,29 @@ class FeedbackListCreateView(APIView):
             FeedbackSerializer(item).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class FeedbackDetailView(APIView):
+    """PATCH status — Support+ staff only."""
+
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        if not getattr(request.user, "can_view_all_feedback", lambda: False)():
+            raise PermissionDenied("You cannot update feedback status.")
+        item = raise_if_missing(
+            Feedback.objects.filter(pk=pk).select_related("user", "resolved_by").first(),
+            "Feedback not found.",
+        )
+        next_status = (request.data.get("status") or "").strip()
+        note = request.data.get("note") or request.data.get("reason") or ""
+        try:
+            item = update_feedback_status_service(
+                item=item,
+                status=next_status,
+                actor=request.user,
+                note=str(note),
+            )
+        except ValueError as exc:
+            raise ValidationFailed(message=str(exc)) from exc
+        return Response(FeedbackSerializer(item).data)

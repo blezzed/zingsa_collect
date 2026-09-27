@@ -6,7 +6,11 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 
 from apps.projects.filters import ProjectFilter
-from apps.projects.selectors.project_selectors import get_project_list_selector, get_project_by_id_selector
+from apps.projects.selectors.project_selectors import (
+    get_project_by_id_selector,
+    get_project_list_selector,
+    get_project_user_filter_profile,
+)
 from apps.projects.serializers.project_serializers import ProjectSerializer
 from apps.projects.services.project_services import create_project_service
 from apps.projects.permissions import HasProjectPrivilege
@@ -43,13 +47,25 @@ class ProjectListCreateView(APIView):
 
     def get(self, request):
         queryset = get_project_list_selector(user=request.user)
-        filtered = ProjectFilter(request.query_params, queryset=queryset).qs
+        filtered = ProjectFilter(
+            request.query_params, queryset=queryset, request=request
+        ).qs
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(filtered, request, view=self)
         serializer = ProjectSerializer(
             page, many=True, context={"request": request}
         )
-        return paginator.get_paginated_response(serializer.data)
+        response = paginator.get_paginated_response(serializer.data)
+        if getattr(request.user, "is_superuser", False):
+            user_id = request.query_params.get("user")
+            if user_id:
+                try:
+                    profile = get_project_user_filter_profile(int(user_id))
+                except (TypeError, ValueError):
+                    profile = None
+                if profile:
+                    response.data["filter_user"] = profile
+        return response
 
     def post(self, request):
         serializer = ProjectSerializer(data=request.data, context={'request': request})

@@ -123,6 +123,8 @@ def map_question_type_to_pg(q: dict) -> str:
         return 'DATE'
     elif q_type == 'time':
         return 'TIME'
+    elif q_type == 'datetime':
+        return 'TIMESTAMPTZ'
     elif q_type in ('radio', 'dropdown', 'select', 'barcode', 'qr', 'password'):
         return 'VARCHAR(255)'
     elif q_type in ('checkbox', 'image', 'video', 'voice', 'audio', 'signature', 'file'):
@@ -289,6 +291,37 @@ def physical_table_exists(table_name: str) -> bool:
         return bool(row and row[0])
 
 
+def list_physical_table_columns(table_name: str) -> list[str]:
+    if not table_name or not physical_table_exists(table_name):
+        return []
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL("SELECT * FROM {} LIMIT 0").format(sql.Identifier(table_name))
+        )
+        return [col[0] for col in cursor.description]
+
+
+def get_live_submission_version(form: Form, fallback=None):
+    """
+    Physical table collectors and the web submissions grid read/write.
+
+    After a new version is published, ``current_version`` may be an unpublished
+    draft with no table. Submissions still belong on the latest published tip.
+    """
+    live = get_latest_published_version(form)
+    if live and live.physical_table_name and physical_table_exists(live.physical_table_name):
+        return live
+    if form.submission_table_name and physical_table_exists(form.submission_table_name):
+        match = form.versions.filter(
+            physical_table_name=form.submission_table_name
+        ).first()
+        if match:
+            return match
+    if fallback and getattr(fallback, "physical_table_name", None):
+        return fallback
+    return None
+
+
 def ensure_physical_columns_service(form_version) -> list[str]:
     """
     ADD COLUMN for any mapped question columns missing from the physical table.
@@ -431,11 +464,16 @@ def create_form_service(
     questions = list(schema.get('questions', []))
     has_spatial = schema_has_spatial_questions(questions)
     if not has_spatial and geometry_type != 'none':
-        q_type = 'location' if geometry_type == 'mixed' else geometry_type
+        # Mobile supports `location` for point capture; do not seed legacy `point`.
+        q_type = (
+            'location'
+            if geometry_type in ('mixed', 'point')
+            else geometry_type
+        )
         questions.append({
             'id': 'geom',
             'type': q_type,
-            'label': 'Geometry Feature',
+            'label': 'Location' if q_type == 'location' else 'Geometry Feature',
             'required': False
         })
         schema['questions'] = questions
@@ -527,6 +565,11 @@ def publish_form_service(form: Form, created_by) -> FormVersion:
     draft_version.published_at = timezone.now()
     draft_version.save()
 
+    # Collectors must only ever see one live tip — retire prior published versions.
+    form.versions.filter(is_published=True).exclude(pk=draft_version.pk).update(
+        is_published=False
+    )
+
     create_physical_form_table_service(draft_version)
     # If the table already existed (IF NOT EXISTS), still add any new columns.
     ensure_physical_columns_service(draft_version)
@@ -583,7 +626,35 @@ def delete_form_service(form: Form) -> None:
 def update_form_service(form: Form, data: dict, schema: dict = None, user = None) -> Form:
     """
     Updates Form configurations and handles version schema generation.
+
+    Title and description can be changed on a published form; that writes them
+    onto the working schema and forks a draft version when the tip is live.
     """
+    data = dict(data or {})
+    if "title" in data:
+        title = (data.get("title") or "").strip()
+        if not title:
+            raise ValidationError("Enter a form title.")
+        data["title"] = title
+    if "description" in data and data["description"] is None:
+        data["description"] = ""
+
+    if schema is None and any(key in data for key in ("title", "description")):
+        current = form.current_version
+        if current and isinstance(current.schema, dict):
+            schema = dict(current.schema)
+
+    if schema is not None:
+        schema = dict(schema)
+        if "title" in data:
+            schema["title"] = data["title"]
+        elif schema.get("title"):
+            data["title"] = str(schema["title"]).strip()
+        if "description" in data:
+            schema["description"] = data.get("description") or ""
+        elif "description" in schema:
+            data["description"] = schema.get("description") or ""
+
     for k, v in data.items():
         setattr(form, k, v)
     form.save()
@@ -594,11 +665,15 @@ def update_form_service(form: Form, data: dict, schema: dict = None, user = None
         questions = list(schema.get('questions', []))
         has_spatial = schema_has_spatial_questions(questions)
         if not has_spatial and form.geometry_type != 'none':
-            q_type = 'location' if form.geometry_type == 'mixed' else form.geometry_type
+            q_type = (
+                'location'
+                if form.geometry_type in ('mixed', 'point')
+                else form.geometry_type
+            )
             questions.append({
                 'id': 'geom',
                 'type': q_type,
-                'label': 'Geometry Feature',
+                'label': 'Location' if q_type == 'location' else 'Geometry Feature',
                 'required': False
             })
             schema['questions'] = questions
@@ -637,33 +712,103 @@ def update_form_service(form: Form, data: dict, schema: dict = None, user = None
     return form
 
 
-def get_available_forms_service(project_code: str = None, is_demo_only: bool = False):
+COLLECTOR_PROJECT_ROLES = ("manager", "collector")
+
+
+def user_can_collect_form(user, form) -> bool:
     """
-    Returns published active forms.
+    Whether a user may list/download a form for field collection.
+    Owners, managers, and collectors only (not viewers). Superusers allowed.
+    Demo forms remain publicly available.
     """
-    queryset = Form.objects.filter(status='published').select_related('current_version')
-    if is_demo_only:
+    from apps.projects.models import ProjectMember
+
+    if form.is_demo:
+        return True
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+
+    if getattr(user, "is_superuser", False):
+        return True
+
+    project = form.project
+    if project.owner_id == user.id:
+        return True
+
+    return ProjectMember.objects.filter(
+        project=project,
+        user=user,
+        role__in=COLLECTOR_PROJECT_ROLES,
+    ).exists()
+
+
+def get_available_forms_service(
+    project_code: str = None,
+    is_demo_only: bool = False,
+    user=None,
+):
+    """
+    Returns published forms on active projects that have a live published version tip.
+    Authenticated collectors only see forms for projects they own or collect on.
+    """
+    from django.db.models import Q
+
+    queryset = (
+        Form.objects.filter(
+            status='published',
+            versions__is_published=True,
+            project__status='active',
+        )
+        .select_related('current_version', 'project')
+        .prefetch_related('versions')
+        .distinct()
+    )
+    if is_demo_only or user is None or not getattr(user, "is_authenticated", False):
         queryset = queryset.filter(is_demo=True)
+    elif not getattr(user, "is_superuser", False):
+        queryset = queryset.filter(
+            Q(project__owner=user)
+            | Q(
+                project__members__user=user,
+                project__members__role__in=COLLECTOR_PROJECT_ROLES,
+            )
+        ).distinct()
     if project_code:
         queryset = queryset.filter(project__code=project_code)
     return queryset
 
 
-def download_form_definition_service(form_id: str, is_demo_only: bool = False) -> dict:
+def download_form_definition_service(
+    form_id: str,
+    is_demo_only: bool = False,
+    user=None,
+) -> dict:
     """
     Downloads the latest published version configuration for collectors.
     """
     try:
         try:
             uuid.UUID(form_id)
-            form = Form.objects.get(id=form_id)
+            form = Form.objects.select_related('project').get(id=form_id)
         except ValueError:
-            form = Form.objects.get(slug=form_id)
+            form = Form.objects.select_related('project').get(slug=form_id)
     except Form.DoesNotExist:
         raise ValidationError(f"Form with identifier '{form_id}' does not exist.")
-        
+
     if is_demo_only and not form.is_demo:
         raise ValidationError(f"Form '{form.title}' is not a demo form. Authentication required.")
+
+    if not user_can_collect_form(user, form):
+        raise ValidationError(
+            f"You do not have access to download form '{form.title}'."
+        )
+
+    if form.project.status != 'active':
+        raise ValidationError(
+            f"Form '{form.title}' belongs to a {form.project.status} project "
+            "and is not available for download."
+        )
 
     if form.status != 'published':
         raise ValidationError(f"Form '{form.title}' is not published yet.")
@@ -687,5 +832,8 @@ def download_form_definition_service(form_id: str, is_demo_only: bool = False) -
     schema['column_mapping'] = version.column_mapping
     schema['physical_table_name'] = version.physical_table_name
     schema['published_at'] = version.published_at.isoformat() if version.published_at else None
+    # Mobile clients should replace any older local copy with this tip.
+    schema['force_update'] = True
+    schema['is_latest'] = True
     
     return schema

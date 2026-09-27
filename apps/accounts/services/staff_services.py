@@ -1,6 +1,20 @@
 from django.contrib.auth import get_user_model
-from django.db.models import Q
+from django.db.models import (
+    BigIntegerField,
+    Count,
+    IntegerField,
+    OuterRef,
+    Prefetch,
+    Q,
+    Subquery,
+    Sum,
+)
+from django.db.models.functions import Coalesce
 
+from apps.mediafiles.models import MediaFile
+from apps.organizations.models import OrganizationMember
+from apps.projects.models import Project, ProjectMember
+from apps.submissions.models import SubmissionIndex
 from common.exceptions import ValidationFailed
 
 User = get_user_model()
@@ -126,8 +140,66 @@ def list_end_users(*, search: str = ""):
             | Q(email__icontains=q)
             | Q(first_name__icontains=q)
             | Q(last_name__icontains=q)
+            | Q(country__icontains=q)
+            | Q(city__icontains=q)
+            | Q(organization_memberships__organization__name__icontains=q)
+        ).distinct()
+    return _annotate_end_user_stats(qs)
+
+
+def _annotate_end_user_stats(qs):
+    owned = (
+        Project.objects.filter(owner_id=OuterRef("pk"))
+        .order_by()
+        .values("owner_id")
+        .annotate(c=Count("id"))
+        .values("c")
+    )
+    members = (
+        ProjectMember.objects.filter(user_id=OuterRef("pk"))
+        .exclude(project__owner_id=OuterRef("pk"))
+        .order_by()
+        .values("user_id")
+        .annotate(c=Count("id"))
+        .values("c")
+    )
+    storage = (
+        MediaFile.objects.filter(uploaded_by_id=OuterRef("pk"))
+        .order_by()
+        .values("uploaded_by_id")
+        .annotate(total=Coalesce(Sum("file_size"), 0))
+        .values("total")
+    )
+    files = (
+        MediaFile.objects.filter(uploaded_by_id=OuterRef("pk"))
+        .order_by()
+        .values("uploaded_by_id")
+        .annotate(c=Count("id"))
+        .values("c")
+    )
+    submissions = (
+        SubmissionIndex.objects.filter(submitted_by_id=OuterRef("pk"))
+        .order_by()
+        .values("submitted_by_id")
+        .annotate(c=Count("id"))
+        .values("c")
+    )
+    return qs.annotate(
+        owned_project_count=Coalesce(Subquery(owned, output_field=IntegerField()), 0),
+        member_project_count=Coalesce(Subquery(members, output_field=IntegerField()), 0),
+        storage_bytes=Coalesce(Subquery(storage, output_field=BigIntegerField()), 0),
+        file_count=Coalesce(Subquery(files, output_field=IntegerField()), 0),
+        submission_count=Coalesce(
+            Subquery(submissions, output_field=IntegerField()), 0
+        ),
+    ).prefetch_related(
+        Prefetch(
+            "organization_memberships",
+            queryset=OrganizationMember.objects.select_related(
+                "organization"
+            ).order_by("organization__name"),
         )
-    return qs
+    )
 
 
 def set_end_user_active(*, actor, user: User, is_active: bool) -> User:

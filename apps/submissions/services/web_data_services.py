@@ -1,4 +1,5 @@
 import json
+import logging
 from django.db import connection, transaction
 from django.contrib.gis.geos import GEOSGeometry
 from psycopg2 import sql
@@ -10,6 +11,21 @@ from apps.forms.services.question_schema import (
     walk_all_questions,
     walk_storage_questions,
 )
+from common.media_url_rewrite import rewrite_media_urls_in_data
+from apps.submissions.services.submission_services import (
+    copy_missing_submissions_to_live_table,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _ensure_live_submissions(form) -> None:
+    try:
+        copy_missing_submissions_to_live_table(form)
+    except Exception:
+        logger.exception(
+            "Could not copy older-version submissions into the live table"
+        )
 
 
 def _is_geojson_geometry(value) -> bool:
@@ -403,6 +419,7 @@ def get_web_geojson_service(form, user=None) -> dict:
     - GeoJSON / lat-lng values nested inside collection (JSONB) repeats,
       including spatial fields nested under groups within a collection item
     """
+    _ensure_live_submissions(form)
     table_name = form.submission_table_name
     if not table_name:
         return {"type": "FeatureCollection", "features": []}
@@ -580,6 +597,7 @@ def get_web_paginated_data_service(
     Optional ``search`` filters rows with case-insensitive substring match
     across all non-geometry columns (backend pagination + filter).
     """
+    _ensure_live_submissions(form)
     table_name = form.submission_table_name
     if not table_name:
         return {"data": [], "total": 0, "page": page, "limit": limit}
@@ -643,7 +661,7 @@ def get_web_paginated_data_service(
                         row_dict[col] = val
                 else:
                     row_dict[col] = val
-            results.append(row_dict)
+            results.append(rewrite_media_urls_in_data(row_dict))
 
     return {
         "data": results,
@@ -679,6 +697,7 @@ def get_web_export_table_service(form) -> dict:
     Full attribute table for export (no geometry WKT/GeoJSON columns).
     Collections remain as JSON in the main sheet; also returns parsed collection sheets.
     """
+    _ensure_live_submissions(form)
     table_name = form.submission_table_name
     version = form.current_version
     empty = {
@@ -942,6 +961,170 @@ def build_xlsx_bytes(export_table: dict) -> bytes:
     return buf.getvalue()
 
 
+def _kml_coord(point) -> str | None:
+    if not isinstance(point, (list, tuple)) or len(point) < 2:
+        return None
+    try:
+        lon = float(point[0])
+        lat = float(point[1])
+    except (TypeError, ValueError):
+        return None
+    alt = 0
+    if len(point) > 2:
+        try:
+            alt = float(point[2])
+        except (TypeError, ValueError):
+            alt = 0
+    return f"{lon},{lat},{alt}"
+
+
+def _kml_coord_ring(ring, close=False) -> str:
+    pts = [_kml_coord(p) for p in (ring or [])]
+    pts = [p for p in pts if p]
+    if close and pts and pts[0] != pts[-1]:
+        pts.append(pts[0])
+    return " ".join(pts)
+
+
+def _kml_geometry_xml(geometry: dict) -> str:
+    if not isinstance(geometry, dict):
+        return ""
+    gtype = (geometry.get("type") or "").strip()
+    coords = geometry.get("coordinates")
+
+    if gtype == "Point":
+        coord = _kml_coord(coords)
+        return f"<Point><coordinates>{coord}</coordinates></Point>" if coord else ""
+
+    if gtype == "MultiPoint":
+        parts = []
+        for pt in coords or []:
+            coord = _kml_coord(pt)
+            if coord:
+                parts.append(f"<Point><coordinates>{coord}</coordinates></Point>")
+        if not parts:
+            return ""
+        if len(parts) == 1:
+            return parts[0]
+        return f"<MultiGeometry>{''.join(parts)}</MultiGeometry>"
+
+    if gtype == "LineString":
+        line = _kml_coord_ring(coords)
+        return f"<LineString><coordinates>{line}</coordinates></LineString>" if line else ""
+
+    if gtype == "MultiLineString":
+        parts = []
+        for line in coords or []:
+            text = _kml_coord_ring(line)
+            if text:
+                parts.append(
+                    f"<LineString><coordinates>{text}</coordinates></LineString>"
+                )
+        if not parts:
+            return ""
+        if len(parts) == 1:
+            return parts[0]
+        return f"<MultiGeometry>{''.join(parts)}</MultiGeometry>"
+
+    if gtype == "Polygon":
+        rings = coords or []
+        if not rings:
+            return ""
+        outer = _kml_coord_ring(rings[0], close=True)
+        if not outer:
+            return ""
+        inner = "".join(
+            f"<innerBoundaryIs><LinearRing><coordinates>{_kml_coord_ring(ring, close=True)}"
+            "</coordinates></LinearRing></innerBoundaryIs>"
+            for ring in rings[1:]
+            if _kml_coord_ring(ring, close=True)
+        )
+        return (
+            "<Polygon>"
+            f"<outerBoundaryIs><LinearRing><coordinates>{outer}</coordinates></LinearRing></outerBoundaryIs>"
+            f"{inner}"
+            "</Polygon>"
+        )
+
+    if gtype == "MultiPolygon":
+        parts = []
+        for poly in coords or []:
+            xml = _kml_geometry_xml({"type": "Polygon", "coordinates": poly})
+            if xml:
+                parts.append(xml)
+        if not parts:
+            return ""
+        if len(parts) == 1:
+            return parts[0]
+        return f"<MultiGeometry>{''.join(parts)}</MultiGeometry>"
+
+    if gtype == "GeometryCollection":
+        parts = [
+            _kml_geometry_xml(child)
+            for child in geometry.get("geometries") or []
+        ]
+        parts = [p for p in parts if p]
+        if not parts:
+            return ""
+        if len(parts) == 1:
+            return parts[0]
+        return f"<MultiGeometry>{''.join(parts)}</MultiGeometry>"
+
+    return ""
+
+
+def build_kml_bytes(geojson: dict, document_name: str = "Export") -> bytes:
+    """Convert a GeoJSON FeatureCollection to KML 2.2 for Google Earth / GIS."""
+    features = geojson.get("features") if isinstance(geojson, dict) else None
+    if not isinstance(features, list):
+        features = []
+
+    placemarks = []
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        geom_xml = _kml_geometry_xml(feature.get("geometry") or {})
+        if not geom_xml:
+            continue
+        props = feature.get("properties") or {}
+        if not isinstance(props, dict):
+            props = {}
+        name = (
+            props.get("field_label")
+            or props.get("collection_label")
+            or props.get("name")
+            or "Feature"
+        )
+        if props.get("id") is not None:
+            name = f"{name} ({props['id']})"
+        data_xml = "".join(
+            f'<Data name="{_escape_xml(key)}"><value>{_escape_xml(value)}</value></Data>'
+            for key, value in props.items()
+            if value is not None and value != ""
+        )
+        extended = (
+            f"<ExtendedData>{data_xml}</ExtendedData>" if data_xml else ""
+        )
+        placemarks.append(
+            "<Placemark>"
+            f"<name>{_escape_xml(name)}</name>"
+            f"{extended}"
+            f"{geom_xml}"
+            "</Placemark>"
+        )
+
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<kml xmlns="http://www.opengis.net/kml/2.2">'
+        "<Document>"
+        f"<name>{_escape_xml(document_name)}</name>"
+        f"{''.join(placemarks)}"
+        "</Document>"
+        "</kml>"
+    )
+    return body.encode("utf-8")
+
+
 def build_csv_bytes(export_table: dict) -> bytes:
     import csv
     from io import StringIO
@@ -1009,6 +1192,7 @@ def delete_web_row_service(form, row_id: int) -> None:
     """Delete a physical submission row and its SubmissionIndex (+ cascaded media)."""
     from apps.submissions.models import SubmissionIndex
 
+    _ensure_live_submissions(form)
     table_name = form.submission_table_name
     if not table_name:
         raise ValueError("Form has no submission table.")

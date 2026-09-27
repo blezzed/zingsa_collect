@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -5,6 +6,8 @@ from rest_framework.views import APIView
 from apps.accounts.filters import UserSearchFilter
 from apps.accounts.selectors.user_selectors import get_active_users_queryset
 from apps.accounts.serializers.user_serializers import UserSuggestSerializer
+
+User = get_user_model()
 
 
 class UserSuggestView(APIView):
@@ -16,8 +19,18 @@ class UserSuggestView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        queryset = get_active_users_queryset()
-        filtered = UserSearchFilter(request.query_params, queryset=queryset).qs
+        if getattr(request.user, "is_superuser", False):
+            queryset = User.objects.all().order_by("username")
+        else:
+            queryset = get_active_users_queryset()
+
+        term = (request.query_params.get("q") or "").strip()
+        if term:
+            filtered = UserSearchFilter(request.query_params, queryset=queryset).qs
+        elif getattr(request.user, "is_superuser", False):
+            filtered = queryset
+        else:
+            filtered = queryset.none()
 
         try:
             limit = int(request.query_params.get("limit", 8))

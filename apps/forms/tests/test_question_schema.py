@@ -126,3 +126,78 @@ class QuestionSchemaServicesTests(TestCase):
         ]
         stored = [q["id"] for q in walk_storage_questions(questions)]
         self.assertEqual(stored, ["name"])
+
+    def test_datetime_maps_to_timestamptz(self):
+        self.assertEqual(map_question_type_to_pg({"type": "datetime"}), "TIMESTAMPTZ")
+
+    def test_rejects_unknown_type(self):
+        with self.assertRaises(Exception):
+            validate_form_schema_service(
+                {
+                    **GARDEN_COLLECTION_SCHEMA,
+                    "questions": [
+                        {"id": "x", "type": "not_a_type", "label": "X"},
+                    ],
+                }
+            )
+
+    def test_rejects_duplicate_ids(self):
+        with self.assertRaises(Exception):
+            validate_form_schema_service(
+                {
+                    **GARDEN_COLLECTION_SCHEMA,
+                    "questions": [
+                        {"id": "name", "type": "text", "label": "A"},
+                        {"id": "name", "type": "text", "label": "B"},
+                    ],
+                }
+            )
+
+    def test_choice_requires_options(self):
+        with self.assertRaises(Exception):
+            validate_form_schema_service(
+                {
+                    **GARDEN_COLLECTION_SCHEMA,
+                    "questions": [
+                        {"id": "status", "type": "radio", "label": "Status"},
+                    ],
+                }
+            )
+
+    def test_condition_operator_and_field(self):
+        validate_form_schema_service(
+            {
+                **GARDEN_COLLECTION_SCHEMA,
+                "questions": [
+                    {"id": "flag", "type": "text", "label": "Flag"},
+                    {
+                        "id": "notes",
+                        "type": "textarea",
+                        "label": "Notes",
+                        "condition": {
+                            "field": "flag",
+                            "operator": "equals",
+                            "value": "yes",
+                        },
+                    },
+                ],
+            }
+        )
+        with self.assertRaises(Exception):
+            validate_form_schema_service(
+                {
+                    **GARDEN_COLLECTION_SCHEMA,
+                    "questions": [
+                        {
+                            "id": "notes",
+                            "type": "textarea",
+                            "label": "Notes",
+                            "condition": {
+                                "field": "missing",
+                                "operator": "equals",
+                                "value": "yes",
+                            },
+                        },
+                    ],
+                }
+            )

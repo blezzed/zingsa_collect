@@ -9,6 +9,7 @@ from apps.submissions.selectors.submission_selectors import get_submission_detai
 from apps.submissions.serializers.submission_serializers import SubmissionIndexSerializer
 from common.view_helpers import raise_if_missing
 
+from apps.analytics.services.export_events import record_data_export
 from apps.submissions.services.web_data_services import (
     get_web_geojson_service,
     get_web_columns_service,
@@ -17,6 +18,7 @@ from apps.submissions.services.web_data_services import (
     build_csv_bytes,
     build_xlsx_bytes,
     build_json_bytes,
+    build_kml_bytes,
     build_spss_labels_bytes,
     delete_web_row_service,
 )
@@ -81,7 +83,7 @@ class WebDataPaginatedView(APIView):
 class WebDataExportView(APIView):
     """
     Kobo-style downloads:
-      format=xlsx|csv|geojson|json|spss_labels
+      format=xlsx|csv|geojson|kml|json|spss_labels
     """
 
     permission_classes = [IsAuthenticated]
@@ -104,49 +106,85 @@ class WebDataExportView(APIView):
             import json
 
             content = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            response = HttpResponse(content, content_type="application/geo+json")
-            response["Content-Disposition"] = f'attachment; filename="{slug}.geojson"'
-            return response
+            return self._file_response(
+                request,
+                form,
+                fmt,
+                content,
+                "application/geo+json",
+                f"{slug}.geojson",
+            )
+
+        if fmt == "kml":
+            payload = get_web_geojson_service(form, user=request.user)
+            content = build_kml_bytes(payload, document_name=form.title or slug)
+            return self._file_response(
+                request,
+                form,
+                fmt,
+                content,
+                "application/vnd.google-earth.kml+xml",
+                f"{slug}.kml",
+            )
 
         table = get_web_export_table_service(form)
 
         if fmt == "csv":
             content = build_csv_bytes(table)
-            response = HttpResponse(content, content_type="text/csv; charset=utf-8")
-            response["Content-Disposition"] = f'attachment; filename="{slug}.csv"'
-            return response
+            return self._file_response(
+                request,
+                form,
+                fmt,
+                content,
+                "text/csv; charset=utf-8",
+                f"{slug}.csv",
+            )
 
         if fmt in ("xlsx", "xls"):
             content = build_xlsx_bytes(table)
-            response = HttpResponse(
+            return self._file_response(
+                request,
+                form,
+                fmt,
                 content,
-                content_type=(
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                ),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                f"{slug}.xlsx",
             )
-            response["Content-Disposition"] = f'attachment; filename="{slug}.xlsx"'
-            return response
 
         if fmt == "json":
             content = build_json_bytes(table)
-            response = HttpResponse(content, content_type="application/json")
-            response["Content-Disposition"] = f'attachment; filename="{slug}.json"'
-            return response
+            return self._file_response(
+                request,
+                form,
+                fmt,
+                content,
+                "application/json",
+                f"{slug}.json",
+            )
 
         if fmt in ("spss_labels", "spss", "labels"):
             content = build_spss_labels_bytes(table)
-            response = HttpResponse(content, content_type="text/csv; charset=utf-8")
-            response["Content-Disposition"] = (
-                f'attachment; filename="{slug}_spss_labels.csv"'
+            return self._file_response(
+                request,
+                form,
+                fmt,
+                content,
+                "text/csv; charset=utf-8",
+                f"{slug}_spss_labels.csv",
             )
-            return response
 
         return Response(
             {
-                "detail": "Unsupported format. Use xlsx, csv, geojson, json, or spss_labels."
+                "detail": "Unsupported format. Use xlsx, csv, geojson, kml, json, or spss_labels."
             },
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+    def _file_response(self, request, form, fmt, content, content_type, filename):
+        record_data_export(user=request.user, form=form, export_format=fmt)
+        response = HttpResponse(content, content_type=content_type)
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
 
 
 class WebDataDetailView(APIView):
@@ -155,11 +193,14 @@ class WebDataDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, form_id, row_id):
-        raise_if_missing(
+        form = raise_if_missing(
             get_form_by_id_selector(form_id, user=request.user),
             "Form not found.",
         )
         from apps.submissions.models import SubmissionIndex
+        from apps.submissions.services.web_data_services import _ensure_live_submissions
+
+        _ensure_live_submissions(form)
 
         try:
             sub_index = SubmissionIndex.objects.get(

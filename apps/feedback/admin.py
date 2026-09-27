@@ -8,10 +8,11 @@ class FeedbackAdmin(admin.ModelAdmin):
     list_display = (
         "subject",
         "category",
+        "status",
         "user",
         "created_at",
     )
-    list_filter = ("category", "created_at")
+    list_filter = ("status", "category", "created_at")
     search_fields = (
         "subject",
         "message",

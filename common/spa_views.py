@@ -98,6 +98,9 @@ def _content_type(path: Path) -> str:
     return fallback.get(path.suffix.lower(), "application/octet-stream")
 
 
+_RESERVED_PREFIXES = ("api", "admin", "minio", "__owner")
+
+
 @require_GET
 def serve_ux_ui(request, resource: str = ""):
     """
@@ -106,6 +109,11 @@ def serve_ux_ui(request, resource: str = ""):
     root = _ux_root()
     if root is None:
         raise Http404("Frontend UI is not available.")
+
+    # Defense in depth: never serve HTML for reserved backend prefixes.
+    head = (resource or "").replace("\\", "/").lstrip("/").split("/", 1)[0]
+    if head in _RESERVED_PREFIXES:
+        raise Http404("Not found.")
 
     for candidate in _candidate_files(root, resource):
         if candidate.is_file():

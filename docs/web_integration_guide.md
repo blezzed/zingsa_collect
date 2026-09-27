@@ -2,7 +2,7 @@
 
 This document outlines the complete sequence of API calls the web frontend should make to authenticate, navigate the project hierarchy, and visualize the submitted data on the map and attribute tables.
 
-All examples assume the backend is running at `http://172.30.5.24:8206`.
+All examples assume the backend is running at `http://172.16.3.24:8206`.
 
 ---
 
@@ -135,7 +135,7 @@ Fetch the actual rows for the table. This endpoint automatically detects and **r
       "synced_at": "2026-05-28T09:30:00Z",
       "road_name": "Samora Machel Ave",
       "severity": "High",
-      "photo": "http://172.30.5.24:8206/media/uploads/2026/05/pothole1.jpg"
+      "photo": "http://172.16.3.24:8206/media/uploads/2026/05/pothole1.jpg"
     }
   ]
 }

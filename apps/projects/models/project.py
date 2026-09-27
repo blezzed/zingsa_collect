@@ -43,7 +43,8 @@ class Project(models.Model):
         constraints = [
             models.UniqueConstraint(
                 Lower('name'),
-                name='collect_project_name_ci_uniq',
+                'owner',
+                name='collect_project_name_owner_ci_uniq',
             ),
         ]
 
