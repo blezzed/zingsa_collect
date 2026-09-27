@@ -81,6 +81,10 @@ apply_manifests() {
       sed -i "s/REPLACE_WITH_NODE_HOSTNAME/${node}/g" "$file"
     done
   fi
+  # Operator CRDs and the Cluster are applied together. The first pass
+  # installs the CRD; the second pass creates the Cluster once that CRD exists.
+  kubectl_bin apply -k "${apply_dir}" || true
+  kubectl_bin wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=180s
   kubectl_bin apply -k "${apply_dir}"
 }
 

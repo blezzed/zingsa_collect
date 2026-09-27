@@ -28,3 +28,14 @@ spec:
                 name: zingsa-env
             - configMapRef:
                 name: zingsa-app-config
+          env:
+            - name: DJANGO_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgis-app
+                  key: username
+            - name: DJANGO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgis-app
+                  key: password

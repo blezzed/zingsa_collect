@@ -13,8 +13,10 @@ data:
   # NodePort is plain HTTP, so session and CSRF cookies must not be Secure.
   SESSION_COOKIE_SECURE: "False"
   CSRF_COOKIE_SECURE: "False"
-  DJANGO_DB_HOST: "postgis"
+  # CloudNativePG primary service. Replicas are postgis-ro; writes and migrations use -rw.
+  DJANGO_DB_HOST: "postgis-rw"
   DJANGO_DB_PORT: "5432"
+  DJANGO_DB_NAME: "zingsa_collect"
   REDIS_URL: "redis://redis:6379/0"
   CELERY_BROKER_URL: "redis://redis:6379/1"
   CELERY_RESULT_BACKEND: "redis://redis:6379/2"

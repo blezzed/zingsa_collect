@@ -1,7 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: zingsa
+# No namespace rewrite here. The operator must stay in cnpg-system.
+# App resources already set namespace zingsa.
 resources:
+  - https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.30.1/cnpg-1.30.1.yaml
   - 00-namespace.yaml
   - 01-configmap.yaml
   - 02-postgis.yaml
