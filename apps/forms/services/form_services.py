@@ -13,6 +13,7 @@ from apps.forms.services.question_schema import (
     infer_geometry_type_from_questions,
     schema_has_spatial_questions,
     validate_questions_recursive,
+    walk_all_questions,
     walk_storage_questions,
 )
 
@@ -145,6 +146,8 @@ def map_question_type_to_pg(q: dict) -> str:
         return 'GEOMETRY(LineString, 4326)'
     elif q_type == 'polygon':
         return 'GEOMETRY(Polygon, 4326)'
+    elif q_type == 'geometry':
+        return 'GEOMETRY(Geometry, 4326)'
     else:
         return 'TEXT'
 
@@ -291,6 +294,27 @@ def physical_table_exists(table_name: str) -> bool:
         return bool(row and row[0])
 
 
+def physical_geometry_columns(table_name: str) -> list[str]:
+    """PostGIS geometry column names on a physical submission table."""
+    if not table_name or not physical_table_exists(table_name):
+        return []
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT f_geometry_column
+                    FROM geometry_columns
+                    WHERE f_table_schema = 'public' AND f_table_name = %s
+                    ORDER BY f_geometry_column
+                    """,
+                    [table_name],
+                )
+                return [row[0] for row in cursor.fetchall()]
+    except Exception:
+        return []
+
+
 def list_physical_table_columns(table_name: str) -> list[str]:
     if not table_name or not physical_table_exists(table_name):
         return []
@@ -417,6 +441,99 @@ def migrate_submissions_between_tables(
         return cursor.rowcount or 0
 
 
+def _map_feature_question_type(geometry_type: str) -> str:
+    """Question type used to store the feature drawn in map-first capture."""
+    if geometry_type == 'point':
+        # Mobile supports `location` for point capture; do not seed legacy `point`.
+        return 'location'
+    if geometry_type in ('line', 'polygon'):
+        return geometry_type
+    return 'geometry'
+
+
+def prepare_schema_geometry(
+    schema: dict,
+    mode: str = 'form_first',
+    geometry_type: str = 'none',
+) -> tuple[dict, str]:
+    """
+    Map-first capture draws a feature before the attribute questions.
+
+    That feature is not one of the authored questions. When the schema has no
+    spatial question, add a hidden one so the physical table has a PostGIS
+    column the submissions map can draw.
+    """
+    schema = dict(schema or {})
+    questions = list(schema.get('questions') or [])
+    mode = schema.get('mode') or mode or 'form_first'
+    hinted = schema.get('geometryType') or schema.get('geometry_type')
+    if not geometry_type or geometry_type == 'none':
+        geometry_type = hinted or 'none'
+
+    has_spatial = schema_has_spatial_questions(questions)
+    if not has_spatial and (geometry_type != 'none' or mode == 'map_first'):
+        if geometry_type == 'none':
+            geometry_type = 'mixed'
+        taken = {
+            q.get('id')
+            for q in walk_all_questions(questions)
+            if isinstance(q, dict)
+        }
+        qid = 'geom' if 'geom' not in taken else 'map_feature'
+        questions.append({
+            'id': qid,
+            'type': _map_feature_question_type(geometry_type),
+            'label': 'Map feature',
+            'required': False,
+            'hidden': True,
+            'mapFeature': True,
+        })
+        has_spatial = True
+
+    inferred = infer_geometry_type_from_questions(questions)
+    if geometry_type == 'none' and inferred != 'none':
+        geometry_type = inferred
+    elif geometry_type == 'none' and has_spatial:
+        geometry_type = inferred if inferred != 'none' else 'point'
+    # A generic storage column infers as mixed. Keep an explicit
+    # point/line/polygon capture type so the mobile map draws that shape.
+    if geometry_type == 'mixed' and hinted in ('point', 'line', 'polygon'):
+        geometry_type = hinted
+
+    schema['questions'] = questions
+    schema['mode'] = mode
+    schema['geometryType'] = geometry_type
+    return schema, geometry_type
+
+
+def align_version_geometry(form, version):
+    """
+    Persist the map-feature question on a version and add the column when the
+    physical table already exists.
+    """
+    if version is None:
+        return None
+    prepared, geometry_type = prepare_schema_geometry(
+        version.schema or {},
+        form.mode,
+        form.geometry_type,
+    )
+    mapping, _ = generate_column_mapping_service(prepared.get('questions') or [])
+    if form.geometry_type != geometry_type or form.mode != prepared.get('mode'):
+        form.geometry_type = geometry_type
+        if prepared.get('mode'):
+            form.mode = prepared['mode']
+        form.save(update_fields=['geometry_type', 'mode', 'updated_at'])
+    if prepared != (version.schema or {}) or mapping != (version.column_mapping or {}):
+        version.schema = prepared
+        version.column_mapping = mapping
+        version.checksum = calculate_form_checksum_service(prepared)
+        version.save(update_fields=['schema', 'column_mapping', 'checksum'])
+        if version.physical_table_name:
+            ensure_physical_columns_service(version)
+    return version
+
+
 @transaction.atomic
 def create_form_service(
     project,
@@ -459,34 +576,10 @@ def create_form_service(
         }
     else:
         validate_form_schema_service(schema)
-        
-    # Inject virtual geom question for map-first forms
-    questions = list(schema.get('questions', []))
-    has_spatial = schema_has_spatial_questions(questions)
-    if not has_spatial and geometry_type != 'none':
-        # Mobile supports `location` for point capture; do not seed legacy `point`.
-        q_type = (
-            'location'
-            if geometry_type in ('mixed', 'point')
-            else geometry_type
-        )
-        questions.append({
-            'id': 'geom',
-            'type': q_type,
-            'label': 'Location' if q_type == 'location' else 'Geometry Feature',
-            'required': False
-        })
-        schema['questions'] = questions
-        has_spatial = True
 
-    # Keep Form.geometry_type aligned with spatial questions in the schema
-    inferred = infer_geometry_type_from_questions(schema.get('questions', []))
-    if geometry_type == 'none' and inferred != 'none':
-        geometry_type = inferred
-    elif geometry_type == 'none' and has_spatial:
-        geometry_type = inferred if inferred != 'none' else 'point'
+    schema, geometry_type = prepare_schema_geometry(schema, mode, geometry_type)
+    form.mode = schema.get('mode') or mode
     form.geometry_type = geometry_type
-    schema['geometryType'] = geometry_type
         
     checksum = calculate_form_checksum_service(schema)
     mapping, _ = generate_column_mapping_service(schema.get('questions', []))
@@ -529,7 +622,12 @@ def publish_form_service(form: Form, created_by) -> FormVersion:
             or 1
         )
         new_num = max_num + 1
-        new_schema = apply_schema_version_label(draft_version.schema, new_num)
+        prepared, geometry_type = prepare_schema_geometry(
+            draft_version.schema, form.mode, form.geometry_type
+        )
+        form.geometry_type = geometry_type
+        form.mode = prepared.get("mode") or form.mode
+        new_schema = apply_schema_version_label(prepared, new_num)
         checksum = calculate_form_checksum_service(new_schema)
         mapping, _ = generate_column_mapping_service(new_schema.get("questions", []))
 
@@ -544,17 +642,24 @@ def publish_form_service(form: Form, created_by) -> FormVersion:
             created_by=created_by,
         )
     else:
-        # Ensure draft schema.version matches version_number before going live.
-        synced = apply_schema_version_label(
-            draft_version.schema, draft_version.version_number
+        # Ensure draft schema.version matches version_number before going live,
+        # and that map-first capture still has a geometry column.
+        prepared, geometry_type = prepare_schema_geometry(
+            draft_version.schema, form.mode, form.geometry_type
         )
-        if synced.get("version") != (draft_version.schema or {}).get("version"):
-            draft_version.schema = synced
-            draft_version.checksum = calculate_form_checksum_service(synced)
-            draft_version.version_label = f"{draft_version.version_number}.0"
-            draft_version.save(
-                update_fields=["schema", "checksum", "version_label"]
-            )
+        form.geometry_type = geometry_type
+        form.mode = prepared.get("mode") or form.mode
+        synced = apply_schema_version_label(
+            prepared, draft_version.version_number
+        )
+        mapping, _ = generate_column_mapping_service(synced.get("questions") or [])
+        draft_version.schema = synced
+        draft_version.column_mapping = mapping
+        draft_version.checksum = calculate_form_checksum_service(synced)
+        draft_version.version_label = f"{draft_version.version_number}.0"
+        draft_version.save(
+            update_fields=["schema", "column_mapping", "checksum", "version_label"]
+        )
 
     table_name = generate_form_table_name_service(
         form.slug, draft_version.version_number, form.id
@@ -661,26 +766,12 @@ def update_form_service(form: Form, data: dict, schema: dict = None, user = None
 
     if schema:
         validate_form_schema_service(schema)
-        
-        questions = list(schema.get('questions', []))
-        has_spatial = schema_has_spatial_questions(questions)
-        if not has_spatial and form.geometry_type != 'none':
-            q_type = (
-                'location'
-                if form.geometry_type in ('mixed', 'point')
-                else form.geometry_type
-            )
-            questions.append({
-                'id': 'geom',
-                'type': q_type,
-                'label': 'Location' if q_type == 'location' else 'Geometry Feature',
-                'required': False
-            })
-            schema['questions'] = questions
 
-        inferred = infer_geometry_type_from_questions(schema.get('questions', []))
-        form.geometry_type = inferred
-        schema['geometryType'] = inferred
+        schema, geometry_type = prepare_schema_geometry(
+            schema, form.mode, form.geometry_type
+        )
+        form.mode = schema.get('mode') or form.mode
+        form.geometry_type = geometry_type
         form.save()
             
         checksum = calculate_form_checksum_service(schema)

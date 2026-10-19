@@ -62,13 +62,34 @@ class Form(models.Model):
     @property
     def has_geodata(self):
         """True if the form captures geometry (form-level type or spatial questions)."""
+        if self.mode == 'map_first':
+            return True
         if self.geometry_type and self.geometry_type != 'none':
             return True
-        version = self.current_version
-        if not version or not isinstance(getattr(version, 'schema', None), dict):
-            return False
         from apps.forms.services.question_schema import schema_has_spatial_questions
-        return schema_has_spatial_questions(version.schema.get('questions', []))
+
+        def _spatial(version) -> bool:
+            schema = getattr(version, 'schema', None)
+            return (
+                isinstance(schema, dict)
+                and schema_has_spatial_questions(schema.get('questions') or [])
+            )
+
+        if _spatial(self.current_version):
+            return True
+        # An unpublished draft can drop the map column while the live
+        # published schema still holds the features the dashboard draws.
+        if getattr(self.current_version, 'is_published', False):
+            return False
+        published = (
+            self.versions.filter(is_published=True)
+            .order_by('-version_number')
+            .only('id', 'schema')
+            .first()
+        )
+        if published and published.pk != getattr(self.current_version, 'pk', None):
+            return _spatial(published)
+        return False
 
 
 class FormVersion(models.Model):

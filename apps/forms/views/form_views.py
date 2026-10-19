@@ -56,8 +56,8 @@ class ProjectFormListCreateView(APIView):
             title=title,
             created_by=request.user,
             schema=schema,
-            mode=schema.get('mode', 'form_first'),
-            geometry_type=schema.get('geometryType', 'none'),
+            mode=schema.get('mode') or 'form_first',
+            geometry_type=schema.get('geometryType') or schema.get('geometry_type') or 'none',
             description=schema.get('description'),
         )
         return Response(FormSerializer(form).data, status=status.HTTP_201_CREATED)

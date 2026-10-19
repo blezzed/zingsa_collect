@@ -4,6 +4,12 @@ from django.db import connection, transaction
 from django.contrib.gis.geos import GEOSGeometry
 from psycopg2 import sql
 
+from apps.forms.services.form_services import (
+    get_live_submission_version,
+    list_physical_table_columns,
+    physical_geometry_columns,
+    physical_table_exists,
+)
 from apps.forms.services.question_schema import (
     SPATIAL_QUESTION_TYPES,
     collection_question_columns,
@@ -159,7 +165,22 @@ def _coerce_to_geojson(value, expected_type=None):
     if isinstance(value, (list, tuple)):
         # Mobile may store vertices as a bare list of {lat,lng}
         if value and isinstance(value[0], dict):
+            if value[0].get("type") == "Feature":
+                return _coerce_to_geojson(
+                    {"type": "FeatureCollection", "features": list(value)},
+                    expected_type=expected_type,
+                )
             coords = _coords_from_point_list(value)
+            if coords:
+                return _geometry_from_coords(coords, expected_type)
+        if value and isinstance(value[0], (list, tuple)):
+            coords = []
+            for item in value:
+                try:
+                    coords.append([float(item[0]), float(item[1])])
+                except (TypeError, ValueError, IndexError):
+                    coords = []
+                    break
             if coords:
                 return _geometry_from_coords(coords, expected_type)
         if len(value) == 2:
@@ -170,6 +191,26 @@ def _coerce_to_geojson(value, expected_type=None):
                 return None
 
     if isinstance(value, dict):
+        if value.get("type") == "Feature" and isinstance(value.get("geometry"), dict):
+            return _coerce_to_geojson(value["geometry"], expected_type=expected_type)
+        if value.get("type") == "FeatureCollection" and isinstance(value.get("features"), list):
+            geoms = []
+            for feature in value["features"]:
+                if not isinstance(feature, dict):
+                    continue
+                geom = _coerce_to_geojson(feature.get("geometry"), expected_type=expected_type)
+                if geom:
+                    geoms.append(geom)
+            if len(geoms) == 1:
+                return geoms[0]
+            if len(geoms) > 1:
+                return {"type": "GeometryCollection", "geometries": geoms}
+            return None
+        if value.get("type") == "GeometryCollection" and isinstance(value.get("geometries"), list):
+            return {
+                "type": "GeometryCollection",
+                "geometries": value["geometries"],
+            }
         if _is_geojson_geometry(value):
             return {
                 "type": value["type"],
@@ -411,127 +452,351 @@ def _parse_stored_json(value):
     return None
 
 
+def _live_form_version(form):
+    """Published tip that owns the submissions table the dashboard reads."""
+    return get_live_submission_version(form) or form.current_version
+
+
+def _schema_geometry_columns(version) -> list[dict]:
+    """Spatial storage columns declared on a form version."""
+    found = []
+    seen = set()
+    if not version or not version.column_mapping:
+        return found
+    questions = (version.schema or {}).get("questions") or []
+
+    def walk(nodes, group_id=None, group_label=None):
+        for question in nodes or []:
+            if not isinstance(question, dict):
+                continue
+            q_type = (question.get("type") or "").lower()
+            q_id = question.get("id")
+            nested = nested_questions(question)
+            label = question.get("label") or q_id
+            if q_type == "collection":
+                continue
+            if q_type in ("section", "group", "note") and nested:
+                next_group = (group_id, group_label)
+                if q_type == "group" and q_id:
+                    next_group = (q_id, label)
+                walk(nested, next_group[0], next_group[1])
+                continue
+            if q_type not in SPATIAL_QUESTION_TYPES or not q_id:
+                continue
+            if q_id not in version.column_mapping:
+                continue
+            col = version.column_mapping[q_id]
+            if col in seen:
+                continue
+            seen.add(col)
+            found.append({
+                "col": col,
+                "qid": q_id,
+                "label": label,
+                "qtype": q_type,
+                "group_id": group_id,
+                "group_label": group_label,
+            })
+
+    walk(questions)
+    return found
+
+
+def _with_physical_geometry_columns(table_name: str, columns: list[dict]) -> list[dict]:
+    """Include PostGIS columns the schema walk missed (map-feature ``geom``)."""
+    seen = {item["col"] for item in columns}
+    for col in physical_geometry_columns(table_name):
+        if col in seen:
+            continue
+        seen.add(col)
+        columns.append({
+            "col": col,
+            "qid": col,
+            "label": "Map feature" if col in ("geom", "map_feature") else col,
+            "qtype": "geometry",
+            "group_id": None,
+            "group_label": None,
+        })
+    return columns
+
+
+def _geometry_feature(row_id, geom_json, meta: dict):
+    if not isinstance(geom_json, dict) or "type" not in geom_json:
+        return None
+    props = {
+        "id": row_id,
+        "field": meta["qid"],
+        "field_label": meta["label"],
+        "question_type": meta["qtype"],
+        "source": "submission",
+    }
+    if meta.get("group_id"):
+        props["group"] = meta["group_id"]
+        props["group_label"] = meta["group_label"]
+    props["feature_key"] = _feature_key(props)
+    return {
+        "type": "Feature",
+        "geometry": geom_json,
+        "properties": props,
+    }
+
+
+def _parse_geom_json(raw, expected_type=None):
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = raw
+    else:
+        parsed = raw
+    if isinstance(parsed, dict) and parsed.get("type") and (
+        "coordinates" in parsed or "geometries" in parsed
+    ):
+        return parsed
+    return _coerce_to_geojson(parsed, expected_type=expected_type)
+
+
+def _fetch_geojson_rows(table_name: str, geom_columns: list[dict], collection_cols: list):
+    """
+    Read id, geometry, and collection payloads.
+
+    A failed statement rolls back to a savepoint so one bad column does not
+    abort the request and hide every feature.
+    """
+    postgis_names = set(physical_geometry_columns(table_name))
+    select_parts = [sql.Identifier("id")]
+    for meta in geom_columns:
+        col = sql.Identifier(meta["col"])
+        if meta["col"] in postgis_names or not postgis_names:
+            select_parts.append(
+                sql.SQL(
+                    "CASE WHEN {c} IS NULL THEN NULL ELSE ST_AsGeoJSON({c}) END"
+                ).format(c=col)
+            )
+        else:
+            select_parts.append(col)
+    for _, col in collection_cols:
+        select_parts.append(sql.Identifier(col))
+
+    query = sql.SQL("SELECT {cols} FROM {table}").format(
+        cols=sql.SQL(", ").join(select_parts),
+        table=sql.Identifier(table_name),
+    )
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(query)
+                return cursor.fetchall()
+    except Exception:
+        logger.exception("GeoJSON query failed for table %s", table_name)
+
+    # Retry column by column so one non-geometry field cannot blank the map.
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT id FROM {} ORDER BY id").format(
+                        sql.Identifier(table_name)
+                    )
+                )
+                ids = [row[0] for row in cursor.fetchall()]
+    except Exception:
+        logger.exception("Could not list submission ids for %s", table_name)
+        return []
+
+    width = 1 + len(geom_columns) + len(collection_cols)
+    by_id = {row_id: [row_id] + [None] * (width - 1) for row_id in ids}
+
+    def _fill(sql_expr, index) -> bool:
+        try:
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(sql_expr)
+                    pairs = cursor.fetchall()
+        except Exception:
+            logger.exception("Skipping unreadable column on %s", table_name)
+            return False
+        for row_id, value in pairs:
+            slot = by_id.get(row_id)
+            if slot is not None:
+                slot[index] = value
+        return True
+
+    for index, meta in enumerate(geom_columns):
+        col = sql.Identifier(meta["col"])
+        read_as_geojson = _fill(
+            sql.SQL(
+                "SELECT id, CASE WHEN {c} IS NULL THEN NULL ELSE ST_AsGeoJSON({c}) END FROM {t}"
+            ).format(c=col, t=sql.Identifier(table_name)),
+            1 + index,
+        )
+        if not read_as_geojson:
+            _fill(
+                sql.SQL("SELECT id, {c} FROM {t}").format(
+                    c=col, t=sql.Identifier(table_name)
+                ),
+                1 + index,
+            )
+    for index, (_, col_name) in enumerate(collection_cols):
+        _fill(
+            sql.SQL("SELECT id, {c} FROM {t}").format(
+                c=sql.Identifier(col_name),
+                t=sql.Identifier(table_name),
+            ),
+            1 + len(geom_columns) + index,
+        )
+    return [by_id[row_id] for row_id in ids]
+
+
+def _supplement_features_from_older_tables(form, live_table: str, features: list) -> list:
+    """
+    Draw features that still live on a previous version table.
+
+    Republishing a map-first form used to drop the geometry column, so the
+    live row kept its attributes and lost the shape. The map uses the live
+    row id so it still lines up with View Submissions.
+    """
+    featured_ids = {
+        feature.get("properties", {}).get("id")
+        for feature in features
+        if isinstance(feature, dict)
+    }
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT id, submission_uuid FROM {}").format(
+                        sql.Identifier(live_table)
+                    )
+                )
+                live_rows = cursor.fetchall()
+    except Exception:
+        logger.exception("Could not read submission ids from %s", live_table)
+        return features
+
+    missing = {}
+    for row_id, sub_uuid in live_rows:
+        if row_id not in featured_ids and sub_uuid is not None:
+            missing[str(sub_uuid)] = row_id
+    if not missing:
+        return features
+
+    versions = sorted(
+        form.versions.all(),
+        key=lambda version: version.version_number or 0,
+        reverse=True,
+    )
+    for version in versions:
+        old_table = version.physical_table_name
+        if (
+            not old_table
+            or old_table == live_table
+            or not physical_table_exists(old_table)
+            or not missing
+        ):
+            continue
+        columns = _with_physical_geometry_columns(
+            old_table, _schema_geometry_columns(version)
+        )
+        postgis_names = set(physical_geometry_columns(old_table))
+        columns = [meta for meta in columns if meta["col"] in postgis_names]
+        if not columns:
+            continue
+        uuids = list(missing.keys())
+        select_parts = [sql.Identifier("submission_uuid")]
+        for meta in columns:
+            select_parts.append(
+                sql.SQL(
+                    "CASE WHEN {c} IS NULL THEN NULL ELSE ST_AsGeoJSON({c}) END"
+                ).format(c=sql.Identifier(meta["col"]))
+            )
+        try:
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        sql.SQL(
+                            "SELECT {cols} FROM {table} WHERE submission_uuid IN ({uuids})"
+                        ).format(
+                            cols=sql.SQL(", ").join(select_parts),
+                            table=sql.Identifier(old_table),
+                            uuids=sql.SQL(", ").join(sql.Placeholder() for _ in uuids),
+                        ),
+                        uuids,
+                    )
+                    old_rows = cursor.fetchall()
+        except Exception:
+            logger.exception("Could not read older geometries from %s", old_table)
+            continue
+        for row in old_rows:
+            sub_uuid = str(row[0])
+            live_id = missing.get(sub_uuid)
+            if live_id is None:
+                continue
+            found = False
+            for index, raw in enumerate(row[1:]):
+                feature = _geometry_feature(
+                    live_id,
+                    _parse_geom_json(raw, columns[index]["qtype"]),
+                    columns[index],
+                )
+                if feature:
+                    features.append(feature)
+                    found = True
+            if found:
+                missing.pop(sub_uuid, None)
+    return features
+
+
 def get_web_geojson_service(form, user=None) -> dict:
     """
     Returns geometries from the physical table for map rendering.
     Includes:
     - top-level geometry columns (including those under groups/sections)
+    - the map-first feature column, even when a later draft dropped it
     - GeoJSON / lat-lng values nested inside collection (JSONB) repeats,
       including spatial fields nested under groups within a collection item
     """
     _ensure_live_submissions(form)
-    table_name = form.submission_table_name
+    version = _live_form_version(form)
+    table_name = form.submission_table_name or getattr(version, "physical_table_name", None)
     if not table_name:
         return {"type": "FeatureCollection", "features": []}
 
-    version = form.current_version
-    geom_cols = []
-    geom_col_ids = []
-    geom_col_labels = []
-    geom_col_types = []
-    geom_col_groups = []  # (group_id, group_label) or (None, None)
-    if version and version.column_mapping:
-        questions = version.schema.get("questions", []) if version.schema else []
-
-        def walk_spatial_columns(nodes, group_id=None, group_label=None):
-            for q in nodes or []:
-                if not isinstance(q, dict):
-                    continue
-                q_type = (q.get("type") or "").lower()
-                q_id = q.get("id")
-                nested = nested_questions(q)
-                label = q.get("label") or q_id
-                if q_type == "collection":
-                    continue
-                if q_type in ("section", "group", "note") and nested:
-                    next_group = (group_id, group_label)
-                    if q_type == "group" and q_id:
-                        next_group = (q_id, label)
-                    walk_spatial_columns(nested, next_group[0], next_group[1])
-                    continue
-                if q_type not in SPATIAL_QUESTION_TYPES or not q_id:
-                    continue
-                if q_id not in version.column_mapping:
-                    continue
-                col = version.column_mapping[q_id]
-                if col in geom_cols:
-                    continue
-                geom_cols.append(col)
-                geom_col_ids.append(q_id)
-                geom_col_labels.append(label)
-                geom_col_types.append(q_type)
-                geom_col_groups.append((group_id, group_label))
-
-        walk_spatial_columns(questions)
-
-    collection_cols = collection_question_columns(version)
-
-    if not geom_cols and not collection_cols:
-        return {"type": "FeatureCollection", "features": []}
+    existing = set(list_physical_table_columns(table_name))
+    geom_columns = [
+        meta
+        for meta in _with_physical_geometry_columns(
+            table_name, _schema_geometry_columns(version)
+        )
+        if meta["col"] in existing
+    ]
+    collection_cols = [
+        pair
+        for pair in collection_question_columns(version)
+        if pair[1] in existing
+    ]
 
     features = []
-    # Prefer ST_AsGeoJSON in SQL so Python/GEOS never parses EWKB (avoids
-    # noisy GEOS_ERROR logs on odd adapter/hex payloads).
-    select_parts = [sql.Identifier("id")]
-    for col in geom_cols:
-        select_parts.append(
-            sql.SQL(
-                "CASE WHEN {c} IS NULL THEN NULL ELSE ST_AsGeoJSON({c}) END"
-            ).format(c=sql.Identifier(col))
-        )
-    for _, col in collection_cols:
-        select_parts.append(sql.Identifier(col))
-
-    with connection.cursor() as cursor:
-        query = sql.SQL("SELECT {cols} FROM {table}").format(
-            cols=sql.SQL(", ").join(select_parts),
-            table=sql.Identifier(table_name),
-        )
-        try:
-            cursor.execute(query)
-            rows = cursor.fetchall()
-        except Exception:
-            return {"type": "FeatureCollection", "features": []}
-
+    if geom_columns or collection_cols:
+        rows = _fetch_geojson_rows(table_name, geom_columns, collection_cols)
         for row in rows:
             row_id = row[0]
             base_props = {"id": row_id}
 
-            for i, geom_json_raw in enumerate(row[1:1 + len(geom_cols)]):
-                if not geom_json_raw:
-                    continue
-                try:
-                    geom_json = (
-                        json.loads(geom_json_raw)
-                        if isinstance(geom_json_raw, str)
-                        else geom_json_raw
-                    )
-                    if not isinstance(geom_json, dict) or "type" not in geom_json:
-                        continue
-                    group_id, group_label = geom_col_groups[i]
-                    props = {
-                        **base_props,
-                        "field": geom_col_ids[i],
-                        "field_label": geom_col_labels[i],
-                        "question_type": geom_col_types[i],
-                        "source": "submission",
-                    }
-                    if group_id:
-                        props["group"] = group_id
-                        props["group_label"] = group_label
-                    props["feature_key"] = _feature_key(props)
-                    features.append({
-                        "type": "Feature",
-                        "geometry": geom_json,
-                        "properties": props,
-                    })
-                except Exception:
-                    pass
+            for index, raw in enumerate(row[1:1 + len(geom_columns)]):
+                feature = _geometry_feature(
+                    row_id,
+                    _parse_geom_json(raw, geom_columns[index]["qtype"]),
+                    geom_columns[index],
+                )
+                if feature:
+                    features.append(feature)
 
-            collection_start = 1 + len(geom_cols)
-            for j, (collection_q, col_name) in enumerate(collection_cols):
-                raw = row[collection_start + j]
-                payload = _parse_stored_json(raw)
+            collection_start = 1 + len(geom_columns)
+            for index, (collection_q, _col_name) in enumerate(collection_cols):
+                payload = _parse_stored_json(row[collection_start + index])
                 if payload is None:
                     continue
                 collection_id = collection_q.get("id")
@@ -551,6 +816,7 @@ def get_web_geojson_service(form, user=None) -> dict:
                         "properties": props,
                     })
 
+    features = _supplement_features_from_older_tables(form, table_name, features)
     return {"type": "FeatureCollection", "features": features}
 
 
@@ -558,7 +824,7 @@ def get_web_columns_service(form) -> list:
     """
     Returns column metadata for the frontend attribute table.
     """
-    version = form.current_version
+    version = _live_form_version(form)
     if not version or not version.column_mapping:
         return []
 
@@ -603,7 +869,7 @@ def get_web_paginated_data_service(
         return {"data": [], "total": 0, "page": page, "limit": limit}
 
     offset = (page - 1) * limit
-    version = form.current_version
+    version = _live_form_version(form)
     search_term = (search or "").strip()
 
     with connection.cursor() as cursor:
@@ -699,7 +965,7 @@ def get_web_export_table_service(form) -> dict:
     """
     _ensure_live_submissions(form)
     table_name = form.submission_table_name
-    version = form.current_version
+    version = _live_form_version(form)
     empty = {
         "headers": [],
         "rows": [],
