@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Strip CR from shell scripts
-        run: sed -i 's/\r$//' scripts/k8s-deploy-remote.sh scripts/apply-public-urls.sh scripts/k8s-ops.sh scripts/install-github-runner.sh docker/entrypoint.sh docker/worker-entrypoint.sh docker/beat-entrypoint.sh
+        run: sed -i 's/\r$//' scripts/k8s-deploy-remote.sh scripts/apply-public-urls.sh scripts/k8s-ops.sh scripts/install-github-runner.sh scripts/migrate-docker-to-k3s.sh k8s/create-secret.sh docker/entrypoint.sh docker/worker-entrypoint.sh docker/beat-entrypoint.sh
 
       - name: Build image
         if: github.event_name == 'push' || github.event.inputs.action == 'deploy'

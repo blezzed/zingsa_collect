@@ -15,4 +15,4 @@ kubectl -n "$NAMESPACE" rollout status deploy/beat --timeout=180s
 
 echo "Live public URL keys:"
 kubectl -n "$NAMESPACE" get configmap zingsa-app-config -o go-template='{{range $k, $v := .data}}{{$k}}={{$v}}{{"\n"}}{{end}}' \
-  | grep -E '^(SITE_URL|FRONTEND_URL|DJANGO_CSRF_TRUSTED_ORIGINS|DJANGO_ALLOWED_HOSTS|AWS_S3_CUSTOM_DOMAIN)='
+  | grep -E '^(SITE_URL|FRONTEND_URL|DJANGO_CSRF_TRUSTED_ORIGINS|DJANGO_ALLOWED_HOSTS|AWS_S3_CUSTOM_DOMAIN|PUBLIC_MEDIA_RELATIVE)='

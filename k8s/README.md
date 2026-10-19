@@ -1,32 +1,61 @@
 # ZINGSA Collect on k3s
 
-Single-node k3s. GitHub-hosted runners cannot reach the private control plane, so the deploy job runs on a self-hosted runner on that node. The kubeconfig on the node is `/etc/rancher/k3s/k3s.yaml`.
+Collect runs on the same single-node k3s cluster as NSDI (`zingsa-hpdesktop460p2xx`, LAN `172.16.3.24`, public `41.174.184.62`), in its own namespace `zingsa`. GitHub-hosted runners cannot reach the control plane, so deploys run on a self-hosted runner on that node. The kubeconfig on the node is `/etc/rancher/k3s/k3s.yaml`.
 
-App pods (web, worker, beat, Redis, MinIO) set `nodeSelector` `kubernetes.io/hostname` to the control-plane node so they run where the imported app image is. CloudNativePG database pods are not pinned. Preferred anti-affinity keeps the three Postgres instances on this one node today, and spreads them across hostnames when more nodes join. Manifests ship with `REPLACE_WITH_NODE_HOSTNAME` only on the pinned pods. This environment cannot reach the cluster. `scripts/k8s-deploy-remote.sh` reads the live name with `kubectl get nodes` and substitutes it before `kubectl apply -k`. For a manual apply, set the hostname first:
+Pods set `nodeSelector` `kubernetes.io/hostname` so they run where the imported images are. Manifests ship with `REPLACE_WITH_NODE_HOSTNAME`. `scripts/k8s-deploy-remote.sh` reads the live name with `kubectl get nodes` and substitutes it before `kubectl apply -k`. For a manual apply, substitute it first:
 
 ```bash
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-kubectl get nodes
 NODE="$(kubectl get nodes -l node-role.kubernetes.io/control-plane -o jsonpath='{.items[0].metadata.name}')"
 grep -R -l REPLACE_WITH_NODE_HOSTNAME k8s/*.yaml | while read -r file; do
   sed -i "s/REPLACE_WITH_NODE_HOSTNAME/${NODE}/g" "$file"
 done
 ```
 
-Public access is NodePort. There is no Ingress in the bundle that `kubectl apply -k k8s` applies.
+Public access is NodePort. There is no Ingress.
 
-## Runner
+## Shared with NSDI
 
-On the control plane, create a registration token for `blezzed/zingsa_collect` and run:
+- The CloudNativePG operator in `cnpg-system` (1.26.1) is shared. This bundle does **not** install or upgrade it; NSDI's database depends on it. The deploy script stops if its CRDs are missing.
+- NodePorts must not collide. NSDI uses 30105, 30432, and 30951.
+- This host cannot pull images reliably. k3s already caches `redis:7-alpine` and `ghcr.io/cloudnative-pg/postgis:16`. The deploy script copies `minio/minio:latest` and `minio/mc:latest` from the host Docker cache into k3s containerd.
 
-```bash
-export RUNNER_TOKEN=...   # registration token, not a personal access token committed to git
-bash scripts/install-github-runner.sh
-```
+## First deploy, in order
 
-Defaults: repository `https://github.com/blezzed/zingsa_collect`, runner name = the control-plane hostname, extra label `zingsa-collect-k3s`. The label `nsdi-k3s` belongs to another app and is not reused. The install directory is `/opt/actions-runner-zingsa-collect` when passwordless sudo works, otherwise `$HOME/actions-runner-zingsa-collect`. Passwordless sudo installs and starts the service. Without it, the script starts `./run.sh` and adds a crontab `@reboot` line.
+1. **Frontend build.** `ux_ui/` is committed because the image is built from this repo. In `zc_frontend`, run `pnpm build:ux`, then commit `ux_ui/` here. The export calls `/api` on the same origin.
 
-The runner user must be able to read `/etc/rancher/k3s/k3s.yaml` and use Docker. Installing the service with sudo is the straightforward way to get that access.
+2. **Runner.** On the control plane, create a registration token for `blezzed/zingsa_collect` (Settings → Actions → Runners → New self-hosted runner) and run:
+
+   ```bash
+   export RUNNER_TOKEN=...   # registration token, never committed
+   bash scripts/install-github-runner.sh
+   ```
+
+   It registers with the label `zingsa-collect-k3s`, which the workflow requires. NSDI's runner is registered to `nsdi_backend` and cannot run these jobs.
+
+3. **Secrets.** On the control plane, reuse the Docker `.env`. The ConfigMap overrides its host, port, and URL keys:
+
+   ```bash
+   bash k8s/create-secret.sh /home/zingsa/Documents/zingsa_collect/.env
+   ```
+
+   This creates `zingsa-env` from the env file, plus the CloudNativePG secret `postgis-app` (`username=zingsa_collect`, password from `DJANGO_DB_PASSWORD`). The file must contain `DJANGO_SECRET_KEY`, `DJANGO_DB_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `MAINTENANCE_OWNER_TOKEN`. `k8s/secret.example.yaml` lists the keys. From a machine with cluster access, `pwsh k8s/create-secret.ps1 -EnvFile .env` does the same.
+
+4. **Deploy.** Push to `main`, or dispatch the workflow with `deploy`. The cluster starts with an empty database; the Docker stack keeps serving `:8206` meanwhile.
+
+5. **Move the data.** On the control plane:
+
+   ```bash
+   export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+   bash scripts/migrate-docker-to-k3s.sh preflight   # read-only
+   bash scripts/migrate-docker-to-k3s.sh db          # downtime starts: Docker app stops
+   bash scripts/migrate-docker-to-k3s.sh media       # MinIO bucket mirror
+   bash scripts/migrate-docker-to-k3s.sh cutover     # k3s app starts, smoke test
+   ```
+
+   `db` compares exact row counts for every table between Docker and k3s and stops if any differ. `rollback` scales the k3s app to 0 and restarts the Docker app. Docker PostGIS and MinIO are never modified.
+
+6. **Clients.** Move mobile apps and bookmarks from `:8206` to `:30206`. For public access, the router must forward `41.174.184.62:30206`. When k3s has been stable, run `docker compose down` in `/home/zingsa/Documents/zingsa_collect`.
 
 ## Workflow
 
@@ -38,65 +67,32 @@ The runner user must be able to read `/etc/rancher/k3s/k3s.yaml` and use Docker.
 | `apply-config` | Apply `k8s/01-configmap.yaml`, restart web, worker, and beat, print the live public URL keys |
 | `maintenance` | Set `MAINTENANCE_MODE=1` on web, worker, and beat. Public HTTP returns 503. The owner bypass still works. No image rebuild |
 | `maintenance-off` | Set `MAINTENANCE_MODE=0` and wait for rollouts |
-| `stop` | Scale web, worker, and beat to 0. The CloudNativePG cluster, Redis, and MinIO keep running |
+| `stop` | Scale web, worker, and beat to 0. PostGIS, Redis, and MinIO keep running |
 | `start` | Scale web, worker, and beat back to 1 and wait |
 
-Push ignores docs, markdown, PDFs, the SQL dump, form JSON, and the seed scripts. Those are not part of the running app.
+Push ignores docs, markdown, PDFs, the SQL dump, form JSON, and the seed scripts.
 
-Optional GitHub secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (only if an image is also pulled or pushed), `SLACK_WEBHOOK_URL`. There is no `K3S_SSH_KEY`. The runner is already on the control plane.
+Optional GitHub secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (only if an image is also pulled or pushed), `SLACK_WEBHOOK_URL`. `MAINTENANCE_OWNER_TOKEN` lives in the Kubernetes Secret, not GitHub.
 
-`MAINTENANCE_OWNER_TOKEN` is not a GitHub secret in this workflow. It lives in the Kubernetes Secret.
+## Database
 
-## Secret, then apply
+Postgres is a CloudNativePG `Cluster` named `postgis` with one instance, 20Gi on `local-path`, the same shape as NSDI. Django uses the primary Service `postgis-rw:5432`. The ConfigMap sets `DJANGO_DB_HOST`, so the Docker `.env` value never applies. Web and worker read the database user and password from `postgis-app`.
 
-Put real values in an env file that is not committed. `k8s/secret.example.yaml` lists the keys. `MAINTENANCE_OWNER_TOKEN` and `MAINTENANCE_MODE` belong in that Secret. The script also creates the CloudNativePG secret `postgis-app` (`username=zingsa_collect`, password from `DJANGO_DB_PASSWORD`). Web, worker, and beat read that secret, so it wins over `DJANGO_DB_USER` / `DJANGO_DB_PASSWORD` in the env file. The ConfigMap wins when the same key exists in both `zingsa-env` and the ConfigMap, so `DJANGO_DB_HOST` stays `postgis-rw`.
-
-```powershell
-pwsh k8s/create-secret.ps1 -EnvFile .env
-```
-
-That runs:
-
-```powershell
-kubectl create namespace zingsa --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n zingsa create secret generic zingsa-env --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Then, on the control plane, after the hostname substitution above:
-
-```bash
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-kubectl apply -k k8s
-```
-
-The app image is not pulled from Docker Hub by the cluster. Build it on the node (or let the workflow build it) and import it. `imagePullPolicy` is `IfNotPresent`. Redis, MinIO, the CloudNativePG operator (`ghcr.io/cloudnative-pg/cloudnative-pg:1.30.1`), and PostGIS (`ghcr.io/cloudnative-pg/postgis:16-3.4`) are public images; import them the same way if the node cannot pull.
-
-Postgres is a CloudNativePG `Cluster` named `postgis`: one primary and two replicas, 20Gi each on the `local-path` storage class. Django uses the primary Service `postgis-rw:5432`. If a previous apply created a Deployment named `postgis`, delete it before the operator takes over:
-
-```bash
-kubectl -n zingsa delete deploy postgis --ignore-not-found
-kubectl -n zingsa delete pvc postgis-data --ignore-not-found
-```
-
-The first `kubectl apply -k k8s` installs the operator CRDs. Run it a second time if the Cluster kind is not registered yet. `scripts/k8s-deploy-remote.sh` does that wait itself.
-
-Web runs `migrate` and `collectstatic` on startup, then Daphne on `0.0.0.0:8005`. Uploads go to MinIO. The media volume is still mounted at Django's `MEDIA_ROOT` (`/app/config/media`) on web and worker for filesystem storage.
+Web runs `migrate` and `collectstatic` on startup, then Daphne on `0.0.0.0:8005`. WhiteNoise serves `/static/`. Uploads go to MinIO.
 
 ## NodePorts
 
 | Service | Cluster DNS | NodePort | Who should reach it |
 | --- | --- | --- | --- |
-| web | `web:8005` | **30206** | Public. App and admin. Not 30105 |
-| postgis primary | `postgis-rw:5432` | **30433** (`postgis-nodeport`) | Admins only. Firewall this port. Not 30432 |
-| minio API | `minio:9000` | **30918** | Public, so clients can open uploaded files |
+| web | `web:8005` | **30206** | Public. App, admin, API, and media via `/minio/` |
+| postgis primary | `postgis-rw:5432` | **30433** (`postgis-nodeport`) | Admins only. Firewall this port |
+| minio API | `minio:9000` | **30918** | Admins and the migration script. Browsers use `/minio/` on 30206 |
 | minio console | `minio:9001` | **30919** | Admins only. Firewall this port |
 | redis | `redis:6379` | none | Cluster only |
 
-Published app URL, using the LAN address already used by this project:
+App URLs: `http://172.16.3.24:30206` (LAN) and `http://41.174.184.62:30206` (public).
 
-`http://172.30.5.24:30206`
-
-Edit `k8s/01-configmap.yaml` if the public IP or a separate frontend host is different, then:
+Edit `k8s/01-configmap.yaml` if an address changes, then:
 
 ```bash
 KUBECONFIG=/etc/rancher/k3s/k3s.yaml bash scripts/apply-public-urls.sh
@@ -108,7 +104,6 @@ KUBECONFIG=/etc/rancher/k3s/k3s.yaml bash scripts/apply-public-urls.sh
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 kubectl -n zingsa get pods,svc
 kubectl -n zingsa get cluster
-kubectl -n cnpg-system get pods
 kubectl -n zingsa logs deploy/web
 kubectl -n zingsa logs deploy/worker
 kubectl -n zingsa logs deploy/beat
@@ -121,7 +116,7 @@ KUBECONFIG=/etc/rancher/k3s/k3s.yaml bash scripts/k8s-ops.sh maintenance
 KUBECONFIG=/etc/rancher/k3s/k3s.yaml bash scripts/k8s-ops.sh maintenance-off
 ```
 
-Or dispatch the workflow with action `maintenance` or `maintenance-off`. Neither rebuilds the image.
+Or dispatch the workflow with `maintenance` or `maintenance-off`. Neither rebuilds the image.
 
 While maintenance is on, everyone else gets HTTP 503 and `Retry-After: 300`. API clients get `{"detail":"maintenance","message":"..."}`. Browsers get `templates/maintenance.html`.
 
@@ -132,4 +127,4 @@ The owner bypass still works:
 
 `POST /__owner/maintenance-bypass/clear/` removes the cookie.
 
-Beat stays at 1 replica. `stop` does not scale Redis, MinIO, or the CloudNativePG cluster.
+Beat stays at 1 replica. `stop` does not scale Redis, MinIO, or PostGIS.

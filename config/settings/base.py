@@ -110,6 +110,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',  # Put CorsMiddleware as high as possible
     'django.middleware.security.SecurityMiddleware',
+    # Serves collected static files when DEBUG is off (k3s runs Daphne with no web server in front).
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'common.maintenance_middleware.MaintenanceModeMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',

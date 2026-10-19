@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="ZINGSA">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a5f"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+  </defs>
+  <circle cx="64" cy="64" r="60" fill="url(#g)"/>
+  <circle cx="64" cy="64" r="46" fill="none" stroke="#ffffff" stroke-width="3" opacity="0.9"/>
+  <ellipse cx="64" cy="64" rx="46" ry="18" fill="none" stroke="#ffffff" stroke-width="2.5" opacity="0.85"/>
+  <ellipse cx="64" cy="64" rx="18" ry="46" fill="none" stroke="#ffffff" stroke-width="2.5" opacity="0.85"/>
+  <circle cx="64" cy="64" r="6" fill="#ffffff"/>
+  <text x="64" y="118" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#1e3a5f"></text>
+</svg>

@@ -1,19 +1,19 @@
-# CloudNativePG runs one primary and two replicas. Preferred anti-affinity
-# lets all three share this single node, and spreads them onto other nodes
-# when those nodes exist. Do not pin these pods with kubernetes.io/hostname.
+# One CloudNativePG instance on the single node, same shape as NSDI.
+# Extra instances on one host add memory and disk use without surviving a node loss.
+# The image is the one already cached in k3s containerd; this host cannot pull reliably.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: postgis
   namespace: zingsa
 spec:
-  instances: 3
-  imageName: ghcr.io/cloudnative-pg/postgis:16-3.4
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgis:16
   imagePullPolicy: IfNotPresent
   affinity:
-    enablePodAntiAffinity: true
-    podAntiAffinityType: preferred
-    topologyKey: kubernetes.io/hostname
+    enablePodAntiAffinity: false
+    nodeSelector:
+      kubernetes.io/hostname: "REPLACE_WITH_NODE_HOSTNAME"
   bootstrap:
     initdb:
       database: zingsa_collect

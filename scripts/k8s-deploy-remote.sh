@@ -10,6 +10,7 @@ NAMESPACE="${NAMESPACE:-zingsa}"
 SKIP_PULL="${SKIP_PULL:-0}"
 KEEP_IMAGE_COUNT="${KEEP_IMAGE_COUNT:-2}"
 K8S_DIR="${K8S_DIR:-}"
+HELPER_IMAGES=(minio/minio:latest minio/mc:latest)
 
 tar_path=""
 cleanup() {
@@ -34,6 +35,7 @@ kubectl_bin() {
 
 # Privileged docker-run chroot: the shell user often cannot call k3s directly,
 # but can talk to docker. The container sees the host filesystem at /host.
+# It runs from the app image, which is always local; this host cannot pull reliably.
 k3s_ctr() {
   if command -v k3s >/dev/null 2>&1 && k3s ctr version >/dev/null 2>&1; then
     k3s ctr "$@"
@@ -41,11 +43,47 @@ k3s_ctr() {
   fi
   local quoted
   quoted="$(printf '%q ' "$@")"
-  docker run --rm --privileged --pid=host \
+  docker run --rm --privileged --pid=host --net=host \
     -v /:/host \
-    alpine:3.20 \
-    chroot /host /bin/sh -c \
+    --entrypoint chroot \
+    "$IMAGE_REF" \
+    /host /bin/sh -c \
     "if [ -x /usr/local/bin/k3s ]; then K3S=/usr/local/bin/k3s; elif [ -x /usr/bin/k3s ]; then K3S=/usr/bin/k3s; else K3S=k3s; fi; \"\$K3S\" ctr ${quoted}"
+}
+
+# The cluster must already have the shared CloudNativePG operator and both Secrets.
+# Failing here gives a clear message instead of pods stuck in CreateContainerConfigError.
+preflight() {
+  if ! kubectl_bin get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
+    echo "CloudNativePG CRDs are missing. This bundle does not install the operator." >&2
+    exit 1
+  fi
+  local secret
+  for secret in zingsa-env postgis-app; do
+    if ! kubectl_bin -n "$NAMESPACE" get secret "$secret" >/dev/null 2>&1; then
+      echo "Secret ${NAMESPACE}/${secret} is missing. Run: bash k8s/create-secret.sh <env-file>" >&2
+      exit 1
+    fi
+  done
+}
+
+# MinIO and mc are not cached in k3s containerd. Copy them from the host Docker cache.
+import_helper_images() {
+  local img cached helper_tar
+  cached="$(k3s_ctr -n k8s.io images ls -q || true)"
+  for img in "${HELPER_IMAGES[@]}"; do
+    if printf '%s\n' "$cached" | grep -Fxq "docker.io/${img}"; then
+      continue
+    fi
+    if ! docker image inspect "$img" >/dev/null 2>&1; then
+      docker pull "$img"
+    fi
+    helper_tar="$(mktemp /tmp/zingsa-collect-helper.XXXXXX.tar)"
+    docker save -o "$helper_tar" "$img"
+    k3s_ctr -n k8s.io images import "$helper_tar"
+    rm -f "$helper_tar"
+    echo "Imported ${img} into k3s containerd"
+  done
 }
 
 control_plane_hostname() {
@@ -81,11 +119,8 @@ apply_manifests() {
       sed -i "s/REPLACE_WITH_NODE_HOSTNAME/${node}/g" "$file"
     done
   fi
-  # Operator CRDs and the Cluster are applied together. The first pass
-  # installs the CRD; the second pass creates the Cluster once that CRD exists.
-  kubectl_bin apply -k "${apply_dir}" || true
-  kubectl_bin wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=180s
   kubectl_bin apply -k "${apply_dir}"
+  rm -rf "${apply_dir}"
 }
 
 prune_old_images() {
@@ -155,6 +190,8 @@ prune_old_images() {
   done < <(k3s_ctr -n k8s.io images ls -q || true)
 }
 
+preflight
+
 if [ "$SKIP_PULL" != "1" ]; then
   if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
     printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
@@ -172,6 +209,7 @@ else
   docker save -o "$tar_path" "$IMAGE_REF" "$latest_ref"
 fi
 k3s_ctr -n k8s.io images import "$tar_path"
+import_helper_images
 
 if [ -n "$K8S_DIR" ] && [ -d "$K8S_DIR" ]; then
   apply_manifests

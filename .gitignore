@@ -34,9 +34,8 @@ Thumbs.db
 # Docker volumes (local only)
 *.pid
 
-# Next.js static export (built via zc_frontend `pnpm build:ux`)
-ux_ui/**
-!ux_ui/.gitkeep
+# The Next.js static export in ux_ui/ (zc_frontend `pnpm build:ux`) is committed:
+# the k3s image is built from this repo, so the frontend must be in it.
 
 # One-off ops scripts with secrets / local admin helpers (do not commit)
 reset_password.py
