@@ -6,49 +6,171 @@ from django.contrib.gis.geos import GEOSGeometry
 from rest_framework.exceptions import ValidationError
 from psycopg2 import sql
 
+from apps.forms.services.question_schema import (
+    SPATIAL_QUESTION_TYPES,
+    walk_storage_questions,
+)
 from apps.submissions.models import SubmissionIndex, SubmissionMedia
 from apps.forms.services.form_services import (
+    align_version_geometry,
     generate_column_mapping_service,
     get_live_submission_version,
     list_physical_table_columns,
     physical_table_exists,
 )
 
+# Answer keys the mobile app uses for the feature drawn before the form.
+_GEOMETRY_ANSWER_KEYS = (
+    "geometry",
+    "feature",
+    "geom",
+    "map_feature",
+    "map_geometry",
+    "mapGeometry",
+    "coordinates",
+)
+
+
+def _expected_type_for_column(col_type: str) -> str | None:
+    upper = (col_type or "").upper()
+    if "LINESTRING" in upper:
+        return "line"
+    if "POLYGON" in upper:
+        return "polygon"
+    if "POINT" in upper:
+        return "point"
+    if "GEOMETRY" in upper:
+        return "geometry"
+    return None
+
+
 def parse_geometry(val, col_type: str) -> str:
     """
-    Safely converts coordinate structures (GeoJSON dict, WKT, or Lat/Lng string)
-    into standard Well-Known Text (WKT).
+    Convert a submitted map feature into WKT.
+
+    Map-first capture sends GeoJSON, a Feature, ``{latitude, longitude}``,
+    or the mobile vertex list ``{points:[{latitude, longitude}, ...]}``.
     """
-    if not val:
+    if val in (None, "", [], {}):
         return None
-        
-    if isinstance(val, dict):
-        try:
-            # If standard coordinate array is submitted instead of GeoJSON, format it
-            if 'coordinates' not in val and 'type' not in val:
-                # E.g. {"latitude": -17.82, "longitude": 31.03}
-                if 'latitude' in val and 'longitude' in val:
-                    lat, lng = float(val['latitude']), float(val['longitude'])
-                    return f"POINT({lng} {lat})"
-            val = json.dumps(val)
-        except Exception:
-            return None
-            
+
+    from apps.submissions.services.web_data_services import _coerce_to_geojson
+
+    expected = _expected_type_for_column(col_type)
+    geojson = _coerce_to_geojson(val, expected_type=expected)
+    if not geojson:
+        return None
     try:
-        # Standard GeoJSON or WKT
-        geom = GEOSGeometry(val)
+        geom = GEOSGeometry(json.dumps(geojson))
+        geom.srid = 4326
         return geom.wkt
     except Exception:
-        # Fallback for coordinate string "lat, lng" e.g., "-17.8252, 31.0335"
-        if isinstance(val, str) and ',' in val:
-            try:
-                parts = [p.strip() for p in val.split(',')]
-                if len(parts) == 2:
-                    lat, lng = float(parts[0]), float(parts[1])
-                    return f"POINT({lng} {lat})"
-            except ValueError:
-                pass
+        return None
+
+
+def submission_geometry_payload(data: dict):
+    """
+    Feature captured on the map, sent beside the attribute answers.
+
+    Map-first saves one feature per submission. The geometry is not one of
+    the authored questions, so clients put it next to ``answers``.
+    """
+    if not isinstance(data, dict):
+        return None
+    for key in ("geometry", "feature", "geom", "map_geometry", "mapGeometry"):
+        value = data.get(key)
+        if value not in (None, "", [], {}):
+            return value
+    features = data.get("features")
+    if isinstance(features, list) and features:
+        return {"type": "FeatureCollection", "features": features}
     return None
+
+
+def _value_looks_like_geometry(value) -> bool:
+    if value in (None, "", [], {}):
+        return False
+    if isinstance(value, dict):
+        if value.get("type") in {
+            "Feature",
+            "FeatureCollection",
+            "Point",
+            "LineString",
+            "Polygon",
+            "MultiPoint",
+            "MultiLineString",
+            "MultiPolygon",
+            "GeometryCollection",
+        }:
+            return True
+        if isinstance(value.get("points"), list):
+            return True
+        if isinstance(value.get("geometry"), dict):
+            return True
+        lat = value.get("latitude", value.get("lat"))
+        lng = value.get("longitude", value.get("lng", value.get("lon")))
+        return lat is not None and lng is not None
+    if isinstance(value, list) and value:
+        first = value[0]
+        if isinstance(first, dict):
+            return (
+                first.get("latitude", first.get("lat")) is not None
+                or first.get("type") == "Feature"
+            )
+        if isinstance(first, (list, tuple)):
+            return True
+    if isinstance(value, str):
+        upper = value.strip().upper()
+        return upper.startswith(
+            ("POINT", "LINESTRING", "POLYGON", "MULTI", "SRID=", "{", "[")
+        )
+    return False
+
+
+def pop_unmapped_geometry(answers: dict, column_mapping: dict):
+    """Lift a map feature that arrived under a key with no question column."""
+    if not isinstance(answers, dict):
+        return None
+    mapping = column_mapping or {}
+    for key in list(answers.keys()):
+        if key in mapping:
+            continue
+        value = answers.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if key in _GEOMETRY_ANSWER_KEYS or _value_looks_like_geometry(value):
+            return answers.pop(key)
+    return None
+
+
+def _map_feature_question_id(version) -> str | None:
+    if not version or not isinstance(getattr(version, "schema", None), dict):
+        return None
+    spatial = []
+    for question in walk_storage_questions(version.schema.get("questions") or []):
+        q_type = (question.get("type") or "").lower()
+        qid = question.get("id")
+        if q_type in SPATIAL_QUESTION_TYPES and qid:
+            spatial.append(question)
+    for question in spatial:
+        if question.get("mapFeature") or question.get("id") in ("geom", "map_feature"):
+            return question["id"]
+    if len(spatial) == 1:
+        return spatial[0]["id"]
+    return None
+
+
+def assign_captured_geometry(version, answers: dict, captured):
+    """Write the drawn feature onto the map column when that answer is empty."""
+    if captured in (None, "", [], {}):
+        return answers
+    qid = _map_feature_question_id(version)
+    if not qid:
+        return answers
+    if answers.get(qid) not in (None, "", [], {}):
+        return answers
+    answers[qid] = captured
+    return answers
 
 
 @transaction.atomic
@@ -57,7 +179,8 @@ def sync_submission_to_physical_table_service(
     device_id: str,
     form_version,
     answers: dict,
-    user = None
+    user = None,
+    geometry = None,
 ) -> tuple[SubmissionIndex, bool]:
     """
     Syncs offline submission details securely into the generated PostGIS table
@@ -79,6 +202,24 @@ def sync_submission_to_physical_table_service(
         return existing, True
 
     write_version = get_live_submission_version(form, fallback=form_version)
+    if write_version is None:
+        write_version = form_version
+
+    answers = dict(answers or {})
+    captured = geometry if geometry not in (None, "", [], {}) else None
+    needs_map_column = (
+        getattr(form, "mode", None) == "map_first"
+        or getattr(form, "geometry_type", None) not in (None, "", "none")
+        or captured is not None
+    )
+    if needs_map_column:
+        write_version = align_version_geometry(form, write_version) or write_version
+
+    unmapped = pop_unmapped_geometry(answers, getattr(write_version, "column_mapping", None))
+    if captured is None:
+        captured = unmapped
+    answers = assign_captured_geometry(write_version, answers, captured)
+
     table_name = getattr(write_version, "physical_table_name", None) if write_version else None
     if not table_name:
         table_name = form_version.physical_table_name

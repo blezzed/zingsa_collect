@@ -5,7 +5,10 @@ from rest_framework.permissions import IsAuthenticated
 from common.permissions import IsProjectCollectorOrHigher
 
 from apps.forms.models import FormVersion
-from apps.submissions.services.submission_services import sync_submission_to_physical_table_service
+from apps.submissions.services.submission_services import (
+    submission_geometry_payload,
+    sync_submission_to_physical_table_service,
+)
 from apps.submissions.serializers.submission_serializers import SubmissionIndexSerializer
 from apps.sync.services.sync_services import bulk_sync_submissions_service
 from apps.sync.models import SyncLog
@@ -37,8 +40,9 @@ class SingleSubmissionSyncView(APIView):
             client_submission_id=data['client_submission_id'],
             device_id=data['device_id'],
             form_version=form_version,
-            answers=data.get('answers', {}),
+            answers=data.get('answers') or {},
             user=request.user,
+            geometry=submission_geometry_payload(data),
         )
 
         serializer = SubmissionIndexSerializer(sub_index)

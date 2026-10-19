@@ -3,7 +3,10 @@ from django.utils import timezone
 
 from apps.sync.models import SyncLog
 from apps.forms.models import FormVersion
-from apps.submissions.services.submission_services import sync_submission_to_physical_table_service
+from apps.submissions.services.submission_services import (
+    submission_geometry_payload,
+    sync_submission_to_physical_table_service,
+)
 
 def bulk_sync_submissions_service(
     device_id: str,
@@ -26,7 +29,8 @@ def bulk_sync_submissions_service(
     for idx, sub_data in enumerate(submissions_list):
         client_submission_id = sub_data.get('client_submission_id')
         version_id = sub_data.get('form_version_id')
-        answers = sub_data.get('answers', {})
+        answers = sub_data.get('answers', {}) or {}
+        geometry = submission_geometry_payload(sub_data)
         
         if not client_submission_id or not version_id:
             total_failed += 1
@@ -57,7 +61,8 @@ def bulk_sync_submissions_service(
                     device_id=device_id,
                     form_version=form_version,
                     answers=answers,
-                    user=user
+                    user=user,
+                    geometry=geometry,
                 )
                 
                 if is_duplicate:
