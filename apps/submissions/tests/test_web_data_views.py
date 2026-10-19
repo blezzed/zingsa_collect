@@ -1,4 +1,6 @@
-import json
+import csv
+from io import StringIO
+
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from rest_framework import status
@@ -34,7 +36,8 @@ class WebDataViewsTests(APITestCase):
             'projectId': 'WEB-1',
             'questions': [
                 {'id': 'location_name', 'type': 'text', 'label': 'Name'},
-                {'id': 'geom_point', 'type': 'point', 'label': 'Location Point'}
+                {'id': 'geom_point', 'type': 'point', 'label': 'Location Point'},
+                {'id': 'geom_generic', 'type': 'geometry', 'label': 'Shape'},
             ]
         }
         mapping, _ = generate_column_mapping_service(schema['questions'])
@@ -65,7 +68,8 @@ class WebDataViewsTests(APITestCase):
                 form_version=self.version,
                 answers={
                     'location_name': f'Point {i}',
-                    'geom_point': {'type': 'Point', 'coordinates': [31.0 + i, -17.0 - i]}
+                    'geom_point': {'type': 'Point', 'coordinates': [31.0 + i, -17.0 - i]},
+                    'geom_generic': {'type': 'Point', 'coordinates': [31.0 + i, -17.0 - i]},
                 },
                 user=self.user
             )
@@ -77,12 +81,41 @@ class WebDataViewsTests(APITestCase):
         
         data = response.json()
         self.assertEqual(data['type'], 'FeatureCollection')
-        self.assertEqual(len(data['features']), 5)
+        self.assertEqual(len(data['features']), 10)
         self.assertEqual(data['features'][0]['type'], 'Feature')
         self.assertIn('geometry', data['features'][0])
         self.assertEqual(data['features'][0]['geometry']['type'], 'Point')
         self.assertIn('id', data['features'][0]['properties'])
-        self.assertNotIn('location_name', data['features'][0]['properties']) # Ensure attributes are stripped
+        self.assertEqual(data['features'][0]['properties']['location_name'], 'Point 1')
+        self.assertEqual(data['features'][0]['properties']['submitted_by'], 'webuser')
+        self.assertTrue(
+            data['features'][0]['properties']['geom_point'].startswith('POINT')
+        )
+        self.assertEqual(data['features'][1]['geometry']['type'], 'Point')
+        self.assertEqual(
+            data['features'][1]['properties']['geom_generic']['type'], 'Point'
+        )
+
+    def test_csv_export_includes_spatial_answers_as_wkt(self):
+        url = reverse("web_data:data_export", kwargs={"form_id": self.form.id})
+        response = self.client.get(url, {"export_format": "csv"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        rows = csv.DictReader(StringIO(response.content.decode("utf-8-sig")))
+        first_row = next(rows)
+        self.assertIn("Location Point", rows.fieldnames)
+        self.assertIn("Shape", rows.fieldnames)
+        self.assertTrue(first_row["Location Point"].startswith("POINT"))
+        self.assertTrue(first_row["Shape"].startswith("POINT"))
+
+    def test_geojson_export_includes_submission_answers(self):
+        url = reverse("web_data:data_export", kwargs={"form_id": self.form.id})
+        response = self.client.get(url, {"export_format": "geojson"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        feature = response.json()["features"][0]
+        self.assertEqual(feature["properties"]["location_name"], "Point 1")
+        self.assertEqual(feature["properties"]["submitted_by"], "webuser")
 
     def test_kml_export(self):
         url = reverse("web_data:data_export", kwargs={"form_id": self.form.id})

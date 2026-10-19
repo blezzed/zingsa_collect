@@ -1,5 +1,6 @@
 import json
 import logging
+from django.contrib.auth import get_user_model
 from django.db import connection, transaction
 from django.contrib.gis.geos import GEOSGeometry
 from psycopg2 import sql
@@ -413,7 +414,7 @@ def _parse_stored_json(value):
 
 def get_web_geojson_service(form, user=None) -> dict:
     """
-    Returns geometries from the physical table for map rendering.
+    Returns physical-table geometries with submission metadata and answers.
     Includes:
     - top-level geometry columns (including those under groups/sections)
     - GeoJSON / lat-lng values nested inside collection (JSONB) repeats,
@@ -466,90 +467,191 @@ def get_web_geojson_service(form, user=None) -> dict:
 
     collection_cols = collection_question_columns(version)
 
-    if not geom_cols and not collection_cols:
-        return {"type": "FeatureCollection", "features": []}
-
-    features = []
-    # Prefer ST_AsGeoJSON in SQL so Python/GEOS never parses EWKB (avoids
-    # noisy GEOS_ERROR logs on odd adapter/hex payloads).
-    select_parts = [sql.Identifier("id")]
-    for col in geom_cols:
-        select_parts.append(
-            sql.SQL(
-                "CASE WHEN {c} IS NULL THEN NULL ELSE ST_AsGeoJSON({c}) END"
-            ).format(c=sql.Identifier(col))
-        )
-    for _, col in collection_cols:
-        select_parts.append(sql.Identifier(col))
-
     with connection.cursor() as cursor:
-        query = sql.SQL("SELECT {cols} FROM {table}").format(
+        cursor.execute(
+            sql.SQL("SELECT * FROM {} LIMIT 0").format(sql.Identifier(table_name))
+        )
+        table_columns = {desc[0] for desc in cursor.description}
+
+        geom_entries = [
+            entry
+            for entry in zip(
+                geom_cols,
+                geom_col_ids,
+                geom_col_labels,
+                geom_col_types,
+                geom_col_groups,
+            )
+            if entry[0] in table_columns
+        ]
+        if geom_entries:
+            (
+                geom_cols,
+                geom_col_ids,
+                geom_col_labels,
+                geom_col_types,
+                geom_col_groups,
+            ) = (list(values) for values in zip(*geom_entries))
+        else:
+            geom_cols = []
+            geom_col_ids = []
+            geom_col_labels = []
+            geom_col_types = []
+            geom_col_groups = []
+        collection_cols = [
+            (question, col)
+            for question, col in collection_cols
+            if col in table_columns
+        ]
+        answer_cols = [
+            (question_id, col)
+            for question_id, col in (version.column_mapping or {}).items()
+            if col in table_columns
+        ] if version else []
+        if not geom_cols and not collection_cols:
+            return {"type": "FeatureCollection", "features": []}
+
+        # Keep the map useful for analysis and exports by carrying all stored
+        # answers alongside each geometry feature.
+        metadata_cols = [
+            col
+            for col in ("submission_uuid", "submitted_by_id", "synced_at")
+            if col in table_columns
+        ]
+        select_parts = [sql.Identifier("id")]
+        select_parts.extend(sql.Identifier(col) for col in metadata_cols)
+        for _, col in answer_cols:
+            if (
+                col in geom_cols
+                and geom_col_types[geom_cols.index(col)] != "geometry"
+            ):
+                select_parts.append(
+                    sql.SQL(
+                        "CASE WHEN {c} IS NULL THEN NULL ELSE ST_AsText({c}) END"
+                    ).format(c=sql.Identifier(col))
+                )
+            else:
+                select_parts.append(sql.Identifier(col))
+        for col, question_type in zip(geom_cols, geom_col_types):
+            if question_type == "geometry":
+                select_parts.append(sql.Identifier(col))
+            else:
+                select_parts.append(
+                    sql.SQL(
+                        "CASE WHEN {c} IS NULL THEN NULL ELSE ST_AsGeoJSON({c}) END"
+                    ).format(c=sql.Identifier(col))
+                )
+
+        query = sql.SQL("SELECT {cols} FROM {table} ORDER BY id ASC").format(
             cols=sql.SQL(", ").join(select_parts),
             table=sql.Identifier(table_name),
         )
-        try:
-            cursor.execute(query)
-            rows = cursor.fetchall()
-        except Exception:
-            return {"type": "FeatureCollection", "features": []}
+        cursor.execute(query)
+        rows = cursor.fetchall()
 
-        for row in rows:
-            row_id = row[0]
-            base_props = {"id": row_id}
+    user_id_index = (
+        1 + metadata_cols.index("submitted_by_id")
+        if "submitted_by_id" in metadata_cols
+        else None
+    )
+    submitted_by_ids = {
+        row[user_id_index]
+        for row in rows
+        if user_id_index is not None and row[user_id_index] is not None
+    }
+    submitted_by_names = dict(
+        get_user_model()
+        .objects.filter(pk__in=submitted_by_ids)
+        .values_list("pk", "username")
+    )
 
-            for i, geom_json_raw in enumerate(row[1:1 + len(geom_cols)]):
-                if not geom_json_raw:
-                    continue
-                try:
+    features = []
+    for row in rows:
+        row_id = row[0]
+        row_values = {}
+        cursor_offset = 1
+        for col in metadata_cols:
+            row_values[col] = row[cursor_offset]
+            cursor_offset += 1
+        answer_values = {}
+        answer_values_by_column = {}
+        for question_id, col in answer_cols:
+            value = row[cursor_offset]
+            if isinstance(value, str) and value.startswith(("{", "[")):
+                parsed = _parse_stored_json(value)
+                if parsed is not None:
+                    value = parsed
+            answer_values[question_id] = value
+            answer_values_by_column[col] = value
+            cursor_offset += 1
+        geometry_values = row[cursor_offset:]
+        submitted_by_id = row_values.get("submitted_by_id")
+        base_props = {
+            **answer_values,
+            "id": row_id,
+            **row_values,
+        }
+        if submitted_by_id is not None:
+            base_props["submitted_by"] = submitted_by_names.get(
+                submitted_by_id, str(submitted_by_id)
+            )
+
+        for i, geom_json_raw in enumerate(geometry_values):
+            if not geom_json_raw:
+                continue
+            try:
+                if geom_col_types[i] == "geometry":
+                    geom_json = _coerce_to_geojson(
+                        geom_json_raw, expected_type="geometry"
+                    )
+                else:
                     geom_json = (
                         json.loads(geom_json_raw)
                         if isinstance(geom_json_raw, str)
                         else geom_json_raw
                     )
-                    if not isinstance(geom_json, dict) or "type" not in geom_json:
-                        continue
-                    group_id, group_label = geom_col_groups[i]
-                    props = {
-                        **base_props,
-                        "field": geom_col_ids[i],
-                        "field_label": geom_col_labels[i],
-                        "question_type": geom_col_types[i],
-                        "source": "submission",
-                    }
-                    if group_id:
-                        props["group"] = group_id
-                        props["group_label"] = group_label
-                    props["feature_key"] = _feature_key(props)
-                    features.append({
-                        "type": "Feature",
-                        "geometry": geom_json,
-                        "properties": props,
-                    })
-                except Exception:
-                    pass
-
-            collection_start = 1 + len(geom_cols)
-            for j, (collection_q, col_name) in enumerate(collection_cols):
-                raw = row[collection_start + j]
-                payload = _parse_stored_json(raw)
-                if payload is None:
+                if not isinstance(geom_json, dict) or "type" not in geom_json:
                     continue
-                collection_id = collection_q.get("id")
-                for geom_json, props in _geometries_from_repeat_payload(
-                    payload,
-                    {
-                        **base_props,
-                        "collection": collection_id,
-                        "collection_label": collection_q.get("label") or collection_id,
-                        "source": "collection",
-                    },
-                    collection_question=collection_q,
-                ):
-                    features.append({
-                        "type": "Feature",
-                        "geometry": geom_json,
-                        "properties": props,
-                    })
+                group_id, group_label = geom_col_groups[i]
+                props = {
+                    **base_props,
+                    "field": geom_col_ids[i],
+                    "field_label": geom_col_labels[i],
+                    "question_type": geom_col_types[i],
+                    "source": "submission",
+                }
+                if group_id:
+                    props["group"] = group_id
+                    props["group_label"] = group_label
+                props["feature_key"] = _feature_key(props)
+                features.append({
+                    "type": "Feature",
+                    "geometry": geom_json,
+                    "properties": props,
+                })
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
+        for collection_q, col_name in collection_cols:
+            payload = _parse_stored_json(answer_values_by_column.get(col_name))
+            if payload is None:
+                continue
+            collection_id = collection_q.get("id")
+            for geom_json, props in _geometries_from_repeat_payload(
+                payload,
+                {
+                    **base_props,
+                    "collection": collection_id,
+                    "collection_label": collection_q.get("label") or collection_id,
+                    "source": "collection",
+                },
+                collection_question=collection_q,
+            ):
+                features.append({
+                    "type": "Feature",
+                    "geometry": geom_json,
+                    "properties": props,
+                })
 
     return {"type": "FeatureCollection", "features": features}
 
@@ -692,9 +794,16 @@ def _serialize_cell(value):
     return value
 
 
-def get_web_export_table_service(form) -> dict:
+def _geometry_as_wkt(value):
+    geometry = _coerce_to_geojson(value, expected_type="geometry")
+    if geometry is None:
+        return _serialize_cell(value)
+    return GEOSGeometry(json.dumps(geometry)).wkt
+
+
+def get_web_export_table_service(form, include_geometry: bool = False) -> dict:
     """
-    Full attribute table for export (no geometry WKT/GeoJSON columns).
+    Full attribute table for export.
     Collections remain as JSON in the main sheet; also returns parsed collection sheets.
     """
     _ensure_live_submissions(form)
@@ -710,6 +819,13 @@ def get_web_export_table_service(form) -> dict:
         return empty
 
     geom_cols = set(_spatial_column_names(version))
+    generic_geometry_cols = {
+        version.column_mapping[q["id"]]
+        for q in walk_all_questions(version.schema.get("questions", []))
+        if (q.get("type") or "").lower() == "geometry"
+        and q.get("id") in version.column_mapping
+    }
+    postgis_geom_cols = geom_cols - generic_geometry_cols
     storage_qs = list(walk_storage_questions(version.schema.get("questions", [])))
 
     main_headers = [
@@ -721,7 +837,7 @@ def get_web_export_table_service(form) -> dict:
     for q in storage_qs:
         q_type = (q.get("type") or "").lower()
         col = version.column_mapping.get(q["id"])
-        if not col or col in geom_cols:
+        if not col or (col in geom_cols and not include_geometry):
             continue
         entry = {
             "id": col,
@@ -783,12 +899,20 @@ def get_web_export_table_service(form) -> dict:
     with connection.cursor() as cursor:
         cursor.execute(sql.SQL("SELECT * FROM {} LIMIT 0").format(sql.Identifier(table_name)))
         all_columns = [desc[0] for desc in cursor.description]
-        select_cols = [c for c in all_columns if c not in geom_cols]
+        select_cols = [
+            c for c in all_columns if include_geometry or c not in geom_cols
+        ]
         if not select_cols:
             select_cols = ["id"]
 
+        select_parts = [
+            sql.SQL("ST_AsText({col}) AS {col}").format(col=sql.Identifier(col))
+            if include_geometry and col in postgis_geom_cols
+            else sql.Identifier(col)
+            for col in select_cols
+        ]
         query = sql.SQL("SELECT {cols} FROM {table} ORDER BY id ASC").format(
-            cols=sql.SQL(", ").join(sql.Identifier(c) for c in select_cols),
+            cols=sql.SQL(", ").join(select_parts),
             table=sql.Identifier(table_name),
         )
         cursor.execute(query)
@@ -821,6 +945,11 @@ def get_web_export_table_service(form) -> dict:
                     record[col] = val
             else:
                 record[col] = val
+
+        if include_geometry:
+            for col in generic_geometry_cols:
+                if col in record:
+                    record[col] = _geometry_as_wkt(record[col])
 
         row_out = []
         for hid in header_ids:
@@ -1206,4 +1335,3 @@ def delete_web_row_service(form, row_id: int) -> None:
             raise LookupError("Row not found.")
 
     SubmissionIndex.objects.filter(form=form, physical_row_id=row_id).delete()
-

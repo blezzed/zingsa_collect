@@ -1,4 +1,5 @@
 from django.http import HttpResponse
+from django.core.serializers.json import DjangoJSONEncoder
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -105,7 +106,9 @@ class WebDataExportView(APIView):
             payload = get_web_geojson_service(form, user=request.user)
             import json
 
-            content = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            content = json.dumps(
+                payload, ensure_ascii=False, cls=DjangoJSONEncoder
+            ).encode("utf-8")
             return self._file_response(
                 request,
                 form,
@@ -127,7 +130,7 @@ class WebDataExportView(APIView):
                 f"{slug}.kml",
             )
 
-        table = get_web_export_table_service(form)
+        table = get_web_export_table_service(form, include_geometry=fmt == "csv")
 
         if fmt == "csv":
             content = build_csv_bytes(table)
