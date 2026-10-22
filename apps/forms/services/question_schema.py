@@ -128,16 +128,11 @@ def schema_has_spatial_questions(questions: list) -> bool:
     return False
 
 
-def infer_geometry_type_from_questions(questions: list) -> str:
-    """
-    Derive Form.geometry_type from spatial question types in the schema.
-    location/point → point; line → line; polygon → polygon; mixed types → mixed.
-    """
+def _spatial_kind_set(questions: list) -> set:
+    """point / line / polygon / mixed, one entry per distinct spatial shape."""
     found = set()
     for q in walk_all_questions(questions):
         q_type = (q.get("type") or "").lower()
-        if q_type not in SPATIAL_QUESTION_TYPES:
-            continue
         if q_type in ("location", "point"):
             found.add("point")
         elif q_type == "line":
@@ -146,11 +141,115 @@ def infer_geometry_type_from_questions(questions: list) -> str:
             found.add("polygon")
         elif q_type == "geometry":
             found.add("mixed")
+    return found
+
+
+def infer_geometry_type_from_questions(questions: list) -> str:
+    """
+    Derive Form.geometry_type from spatial question types in the schema.
+    location/point → point; line → line; polygon → polygon;
+    geometry (any shape) or several shapes → mixed.
+    """
+    found = _spatial_kind_set(questions)
     if not found:
         return "none"
     if len(found) == 1:
         return next(iter(found))
     return "mixed"
+
+
+# Question type written for the geometry chosen on form create.
+# `location` is point-only. Mixed must be generic `geometry` so a later
+# line or polygon submission is not stored in a Point column.
+_CAPTURE_TYPE_FOR_GEOMETRY = {
+    "point": "location",
+    "line": "line",
+    "polygon": "polygon",
+    "mixed": "geometry",
+}
+_CAPTURE_LABEL = {
+    "location": "Location",
+    "line": "Line",
+    "polygon": "Polygon",
+    "geometry": "Geometry",
+}
+
+
+def capture_question_type(geometry_type: str) -> str | None:
+    return _CAPTURE_TYPE_FOR_GEOMETRY.get((geometry_type or "").lower())
+
+
+def seed_spatial_question(geometry_type: str) -> dict | None:
+    """Default capture question when a form is created with a geometry type."""
+    q_type = capture_question_type(geometry_type)
+    if not q_type:
+        return None
+    return {
+        "id": "geom",
+        "type": q_type,
+        "label": _CAPTURE_LABEL[q_type],
+        "required": False,
+    }
+
+
+def align_single_capture_question(questions: list, geometry_type: str) -> None:
+    """
+    A form with one spatial question should use the geometry selected at
+    create time. Mixed used to be seeded as `location`, which is a Point
+    column, so line and polygon submissions came back as points.
+    """
+    desired = capture_question_type(geometry_type)
+    if not desired:
+        return
+    spatial = [
+        q
+        for q in walk_all_questions(questions)
+        if isinstance(q, dict)
+        and (q.get("type") or "").lower() in SPATIAL_QUESTION_TYPES
+    ]
+    if len(spatial) != 1:
+        return
+    question = spatial[0]
+    current = (question.get("type") or "").lower()
+    if current == desired:
+        return
+    pointish = {"location", "point"}
+    selected = geometry_type.lower()
+    if selected == "mixed" and current in pointish | {"geometry"}:
+        question["type"] = desired
+    elif selected in ("line", "polygon") and current in pointish | {"geometry"}:
+        question["type"] = desired
+    elif selected == "point" and current == "geometry":
+        question["type"] = "location"
+    else:
+        return
+    label = (question.get("label") or "").strip().lower()
+    if label in ("", "location", "geometry", "geometry feature"):
+        question["label"] = _CAPTURE_LABEL[desired]
+
+
+def resolve_geometry_type(requested: str, questions: list) -> str:
+    """
+    Keep an explicit line / polygon / mixed selection. Inference still wins
+    when the schema actually contains more than one shape.
+    """
+    requested = (requested or "none").lower()
+    if requested not in ("none", "point", "line", "polygon", "mixed"):
+        requested = "none"
+    if requested != "none":
+        align_single_capture_question(questions, requested)
+    inferred = infer_geometry_type_from_questions(questions)
+    if requested == "none":
+        return inferred
+    if len(_spatial_kind_set(questions)) > 1:
+        return "mixed"
+    if inferred in ("none", requested):
+        return requested
+    if inferred == "point" and requested in ("line", "polygon", "mixed"):
+        return requested
+    if inferred == "mixed" and requested in ("point", "line", "polygon"):
+        return requested
+    return inferred or requested
 
 
 def _require_bool(q: dict, key: str, path: str) -> None:

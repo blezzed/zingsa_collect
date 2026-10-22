@@ -106,10 +106,55 @@ def _geometry_from_coords(coords, expected_type=None):
     return {"type": "Point", "coordinates": coords[0]}
 
 
+def _explicit_shape(value):
+    """line / polygon / point when the payload names its own shape."""
+    if not isinstance(value, dict):
+        return None
+    raw = (
+        value.get("type")
+        or value.get("geometryType")
+        or value.get("shape")
+        or value.get("geomType")
+        or ""
+    )
+    return {
+        "point": "point",
+        "location": "point",
+        "multipoint": "point",
+        "line": "line",
+        "linestring": "line",
+        "multilinestring": "line",
+        "polygon": "polygon",
+        "multipolygon": "polygon",
+    }.get(str(raw).strip().lower())
+
+
+def _shape_for_vertices(value, expected_type):
+    """
+    Prefer the shape the collector captured. A mixed/geometry field, and a
+    point field that actually received a line or polygon, must not collapse
+    to the first vertex.
+    """
+    explicit = _explicit_shape(value)
+    et = (expected_type or "").lower()
+    if explicit and (
+        et in ("geometry", "mixed", "") or explicit in ("line", "polygon")
+    ):
+        return explicit
+    return expected_type
+
+
 def _coerce_to_geojson(value, expected_type=None):
     """Normalize stored collection/group spatial values into a GeoJSON geometry dict."""
     if value is None or value == "":
         return None
+
+    if isinstance(value, (bytes, memoryview)):
+        try:
+            geom = GEOSGeometry(bytes(value))
+            return json.loads(geom.geojson)
+        except Exception:
+            return None
 
     if isinstance(value, str):
         stripped = value.strip()
@@ -180,7 +225,9 @@ def _coerce_to_geojson(value, expected_type=None):
         points = value.get("points")
         if isinstance(points, list) and points:
             coords = _coords_from_point_list(points)
-            geom = _geometry_from_coords(coords, expected_type)
+            geom = _geometry_from_coords(
+                coords, _shape_for_vertices(value, expected_type)
+            )
             if geom:
                 return geom
         lat = value.get("latitude", value.get("lat"))
@@ -521,20 +568,33 @@ def get_web_geojson_service(form, user=None) -> dict:
         select_parts = [sql.Identifier("id")]
         select_parts.extend(sql.Identifier(col) for col in metadata_cols)
         for _, col in answer_cols:
-            if (
-                col in geom_cols
-                and geom_col_types[geom_cols.index(col)] != "geometry"
-            ):
+            if col not in geom_cols:
+                select_parts.append(sql.Identifier(col))
+                continue
+            question_type = geom_col_types[geom_cols.index(col)]
+            if question_type == "geometry":
+                # Generic geometry may be a real geometry column (mixed) or
+                # legacy JSON text. Return GeoJSON either way.
+                select_parts.append(
+                    sql.SQL(
+                        "CASE WHEN pg_typeof({c})::text = 'geometry' "
+                        "THEN ST_AsGeoJSON({c}) ELSE {c}::text END"
+                    ).format(c=sql.Identifier(col))
+                )
+            else:
                 select_parts.append(
                     sql.SQL(
                         "CASE WHEN {c} IS NULL THEN NULL ELSE ST_AsText({c}) END"
                     ).format(c=sql.Identifier(col))
                 )
-            else:
-                select_parts.append(sql.Identifier(col))
         for col, question_type in zip(geom_cols, geom_col_types):
             if question_type == "geometry":
-                select_parts.append(sql.Identifier(col))
+                select_parts.append(
+                    sql.SQL(
+                        "CASE WHEN pg_typeof({c})::text = 'geometry' "
+                        "THEN ST_AsGeoJSON({c}) ELSE {c}::text END"
+                    ).format(c=sql.Identifier(col))
+                )
             else:
                 select_parts.append(
                     sql.SQL(
@@ -905,12 +965,23 @@ def get_web_export_table_service(form, include_geometry: bool = False) -> dict:
         if not select_cols:
             select_cols = ["id"]
 
-        select_parts = [
-            sql.SQL("ST_AsText({col}) AS {col}").format(col=sql.Identifier(col))
-            if include_geometry and col in postgis_geom_cols
-            else sql.Identifier(col)
-            for col in select_cols
-        ]
+        select_parts = []
+        for col in select_cols:
+            if include_geometry and col in postgis_geom_cols:
+                select_parts.append(
+                    sql.SQL("ST_AsText({col}) AS {col}").format(
+                        col=sql.Identifier(col)
+                    )
+                )
+            elif include_geometry and col in generic_geometry_cols:
+                select_parts.append(
+                    sql.SQL(
+                        "CASE WHEN pg_typeof({col})::text = 'geometry' "
+                        "THEN ST_AsText({col}) ELSE {col}::text END AS {col}"
+                    ).format(col=sql.Identifier(col))
+                )
+            else:
+                select_parts.append(sql.Identifier(col))
         query = sql.SQL("SELECT {cols} FROM {table} ORDER BY id ASC").format(
             cols=sql.SQL(", ").join(select_parts),
             table=sql.Identifier(table_name),

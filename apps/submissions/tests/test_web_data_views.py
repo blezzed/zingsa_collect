@@ -96,6 +96,68 @@ class WebDataViewsTests(APITestCase):
             data['features'][1]['properties']['geom_generic']['type'], 'Point'
         )
 
+    def test_generic_geometry_keeps_line_and_polygon(self):
+        line_points = [
+            {"latitude": -17.2, "longitude": 31.2},
+            {"latitude": -17.3, "longitude": 31.3},
+            {"latitude": -17.4, "longitude": 31.4},
+        ]
+        polygon_points = [
+            {"latitude": -17.5, "longitude": 31.5},
+            {"latitude": -17.6, "longitude": 31.6},
+            {"latitude": -17.55, "longitude": 31.7},
+        ]
+        sync_submission_to_physical_table_service(
+            client_submission_id="sub-line",
+            device_id="device-1",
+            form_version=self.version,
+            answers={
+                "location_name": "Line capture",
+                "geom_point": {"type": "Point", "coordinates": [31.2, -17.2]},
+                "geom_generic": {
+                    "type": "line",
+                    "latitude": -17.2,
+                    "longitude": 31.2,
+                    "points": line_points,
+                },
+            },
+            user=self.user,
+        )
+        sync_submission_to_physical_table_service(
+            client_submission_id="sub-polygon",
+            device_id="device-1",
+            form_version=self.version,
+            answers={
+                "location_name": "Polygon capture",
+                "geom_point": {"type": "Point", "coordinates": [31.5, -17.5]},
+                "geom_generic": {
+                    "type": "polygon",
+                    "latitude": -17.5,
+                    "longitude": 31.5,
+                    "points": polygon_points,
+                },
+            },
+            user=self.user,
+        )
+
+        url = reverse("web_data:geojson", kwargs={"form_id": self.form.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        features = response.json()["features"]
+
+        def generic_type(name):
+            matches = [
+                feature
+                for feature in features
+                if feature["properties"].get("location_name") == name
+                and feature["properties"].get("question_type") == "geometry"
+            ]
+            self.assertEqual(len(matches), 1)
+            return matches[0]["geometry"]["type"]
+
+        self.assertEqual(generic_type("Line capture"), "LineString")
+        self.assertEqual(generic_type("Polygon capture"), "Polygon")
+
     def test_csv_export_includes_spatial_answers_as_wkt(self):
         url = reverse("web_data:data_export", kwargs={"form_id": self.form.id})
         response = self.client.get(url, {"export_format": "csv"})
@@ -291,3 +353,42 @@ class PreviousVersionSubmissionTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         names = {row.get("q_name") for row in response.json()["data"]}
         self.assertIn("Orphan on v1", names)
+
+    def test_republished_form_first_detail_reads_the_live_row(self):
+        from apps.submissions.models import SubmissionIndex
+
+        self._publish_v1()
+        sync_submission_to_physical_table_service(
+            client_submission_id="sub-v1-detail",
+            device_id="device-detail",
+            form_version=self.v1,
+            answers={"q_name": "Alice"},
+            user=self.user,
+        )
+        self._publish_v2()
+        self.form.refresh_from_db()
+        live_table = self.form.submission_table_name
+        self.assertNotEqual(live_table, self.v1.physical_table_name)
+        self.assertTrue(
+            SubmissionIndex.objects.filter(
+                form=self.form,
+                physical_table_name=self.v1.physical_table_name,
+            ).exists()
+        )
+
+        list_url = reverse("web_data:data_paginated", kwargs={"form_id": self.form.id})
+        listed = self.client.get(list_url)
+        self.assertEqual(listed.status_code, status.HTTP_200_OK)
+        row_id = listed.json()["data"][0]["id"]
+
+        detail_url = reverse(
+            "web_data:data_detail",
+            kwargs={"form_id": self.form.id, "row_id": row_id},
+        )
+        detail = self.client.get(detail_url)
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        body = detail.json()
+        self.assertEqual(body["answers"].get("q_name"), "Alice")
+        self.assertIn("q_notes", body["answers"])
+        self.assertEqual(body["metadata"]["physical_table_name"], live_table)
+        self.assertEqual(body["metadata"]["physical_row_id"], row_id)

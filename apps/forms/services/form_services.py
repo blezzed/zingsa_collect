@@ -10,8 +10,9 @@ from psycopg2 import sql
 
 from apps.forms.models import Form, FormVersion
 from apps.forms.services.question_schema import (
-    infer_geometry_type_from_questions,
+    resolve_geometry_type,
     schema_has_spatial_questions,
+    seed_spatial_question,
     validate_questions_recursive,
     walk_storage_questions,
 )
@@ -145,6 +146,9 @@ def map_question_type_to_pg(q: dict) -> str:
         return 'GEOMETRY(LineString, 4326)'
     elif q_type == 'polygon':
         return 'GEOMETRY(Polygon, 4326)'
+    elif q_type == 'geometry':
+        # Mixed capture: point, line, and polygon in one column.
+        return 'GEOMETRY(Geometry, 4326)'
     else:
         return 'TEXT'
 
@@ -460,31 +464,20 @@ def create_form_service(
     else:
         validate_form_schema_service(schema)
         
-    # Inject virtual geom question for map-first forms
+    # Inject a capture question when the form has a geometry type but no
+    # spatial question yet (map-first). Mixed uses generic `geometry`, not
+    # `location`, so line and polygon submissions are not forced into a point.
     questions = list(schema.get('questions', []))
     has_spatial = schema_has_spatial_questions(questions)
     if not has_spatial and geometry_type != 'none':
-        # Mobile supports `location` for point capture; do not seed legacy `point`.
-        q_type = (
-            'location'
-            if geometry_type in ('mixed', 'point')
-            else geometry_type
-        )
-        questions.append({
-            'id': 'geom',
-            'type': q_type,
-            'label': 'Location' if q_type == 'location' else 'Geometry Feature',
-            'required': False
-        })
-        schema['questions'] = questions
-        has_spatial = True
+        seeded = seed_spatial_question(geometry_type)
+        if seeded:
+            questions.append(seeded)
+            schema['questions'] = questions
 
-    # Keep Form.geometry_type aligned with spatial questions in the schema
-    inferred = infer_geometry_type_from_questions(schema.get('questions', []))
-    if geometry_type == 'none' and inferred != 'none':
-        geometry_type = inferred
-    elif geometry_type == 'none' and has_spatial:
-        geometry_type = inferred if inferred != 'none' else 'point'
+    geometry_type = resolve_geometry_type(
+        geometry_type, schema.get('questions', [])
+    )
     form.geometry_type = geometry_type
     schema['geometryType'] = geometry_type
         
@@ -664,23 +657,18 @@ def update_form_service(form: Form, data: dict, schema: dict = None, user = None
         
         questions = list(schema.get('questions', []))
         has_spatial = schema_has_spatial_questions(questions)
-        if not has_spatial and form.geometry_type != 'none':
-            q_type = (
-                'location'
-                if form.geometry_type in ('mixed', 'point')
-                else form.geometry_type
-            )
-            questions.append({
-                'id': 'geom',
-                'type': q_type,
-                'label': 'Location' if q_type == 'location' else 'Geometry Feature',
-                'required': False
-            })
-            schema['questions'] = questions
+        requested = schema.get('geometryType') or form.geometry_type or 'none'
+        if not has_spatial and requested != 'none':
+            seeded = seed_spatial_question(requested)
+            if seeded:
+                questions.append(seeded)
+                schema['questions'] = questions
 
-        inferred = infer_geometry_type_from_questions(schema.get('questions', []))
-        form.geometry_type = inferred
-        schema['geometryType'] = inferred
+        geometry_type = resolve_geometry_type(
+            requested, schema.get('questions', [])
+        )
+        form.geometry_type = geometry_type
+        schema['geometryType'] = geometry_type
         form.save()
             
         checksum = calculate_form_checksum_service(schema)

@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
 from apps.forms.selectors.form_selectors import get_form_by_id_selector
-from apps.submissions.selectors.submission_selectors import get_submission_details_selector
+from apps.submissions.selectors.submission_selectors import get_physical_row_answers
 from apps.submissions.serializers.submission_serializers import SubmissionIndexSerializer
 from common.view_helpers import raise_if_missing
 
@@ -205,23 +205,27 @@ class WebDataDetailView(APIView):
 
         _ensure_live_submissions(form)
 
-        try:
-            sub_index = SubmissionIndex.objects.get(
-                form_id=form_id, physical_row_id=row_id
-            )
-            details = raise_if_missing(
-                get_submission_details_selector(str(sub_index.id)),
-                "Submission not found.",
-            )
-            meta_serializer = SubmissionIndexSerializer(details["metadata"])
-            return Response(
-                {
-                    "metadata": meta_serializer.data,
-                    "answers": details["answers"],
-                }
-            )
-        except SubmissionIndex.DoesNotExist:
+        table_name = form.submission_table_name
+        answers = (
+            get_physical_row_answers(table_name, row_id) if table_name else None
+        )
+        if answers is None:
             return Response({"detail": "Submission not found."}, status=404)
+
+        sub_index = SubmissionIndex.objects.filter(
+            form_id=form_id,
+            physical_table_name=table_name,
+            physical_row_id=row_id,
+        ).first()
+        if sub_index is None:
+            sub_index = SubmissionIndex.objects.filter(
+                form_id=form_id,
+                physical_row_id=row_id,
+            ).first()
+        metadata = (
+            SubmissionIndexSerializer(sub_index).data if sub_index is not None else {}
+        )
+        return Response({"metadata": metadata, "answers": answers})
 
     def delete(self, request, form_id, row_id):
         form = raise_if_missing(

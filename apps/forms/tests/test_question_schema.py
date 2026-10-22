@@ -6,6 +6,7 @@ from apps.forms.services.form_services import (
     validate_form_schema_service,
 )
 from apps.forms.services.question_schema import (
+    resolve_geometry_type,
     schema_has_spatial_questions,
     walk_storage_questions,
 )
@@ -118,6 +119,35 @@ class QuestionSchemaServicesTests(TestCase):
             ),
             "polygon",
         )
+
+    def test_mixed_selection_is_not_rewritten_to_point(self):
+        questions = [{"id": "geom", "type": "location", "label": "Location"}]
+        self.assertEqual(resolve_geometry_type("mixed", questions), "mixed")
+        self.assertEqual(questions[0]["type"], "geometry")
+        _, db_types = generate_column_mapping_service(questions)
+        self.assertEqual(db_types["geom"], "GEOMETRY(Geometry, 4326)")
+
+    def test_line_and_polygon_selection_keep_their_column_type(self):
+        line = [{"id": "geom", "type": "location", "label": "Location"}]
+        self.assertEqual(resolve_geometry_type("line", line), "line")
+        self.assertEqual(line[0]["type"], "line")
+        _, line_types = generate_column_mapping_service(line)
+        self.assertEqual(line_types["geom"], "GEOMETRY(LineString, 4326)")
+
+        polygon = [{"id": "geom", "type": "point", "label": "Location"}]
+        self.assertEqual(resolve_geometry_type("polygon", polygon), "polygon")
+        self.assertEqual(polygon[0]["type"], "polygon")
+        _, polygon_types = generate_column_mapping_service(polygon)
+        self.assertEqual(polygon_types["geom"], "GEOMETRY(Polygon, 4326)")
+
+    def test_several_shapes_stay_mixed(self):
+        questions = [
+            {"id": "boundary", "type": "line", "label": "Line"},
+            {"id": "parcel", "type": "polygon", "label": "Polygon"},
+        ]
+        self.assertEqual(resolve_geometry_type("line", questions), "mixed")
+        self.assertEqual(questions[0]["type"], "line")
+        self.assertEqual(questions[1]["type"], "polygon")
 
     def test_walk_storage_skips_note(self):
         questions = [

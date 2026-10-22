@@ -14,40 +14,188 @@ from apps.forms.services.form_services import (
     physical_table_exists,
 )
 
+def _column_geometry_kind(col_type: str) -> str:
+    """point / line / polygon, or any for a generic geometry column."""
+    upper = (col_type or "").upper()
+    if "LINESTRING" in upper:
+        return "line"
+    if "POLYGON" in upper:
+        return "polygon"
+    if "POINT" in upper and "MULTIPOINT" not in upper:
+        return "point"
+    return "any"
+
+
+def _payload_geometry_kind(value) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    raw = (
+        value.get("type")
+        or value.get("geometryType")
+        or value.get("shape")
+        or value.get("geomType")
+        or ""
+    )
+    return {
+        "point": "point",
+        "location": "point",
+        "multipoint": "point",
+        "line": "line",
+        "linestring": "line",
+        "multilinestring": "line",
+        "polygon": "polygon",
+        "multipolygon": "polygon",
+    }.get(str(raw).strip().lower())
+
+
+def _coord_pairs(points) -> list:
+    coords = []
+    if not isinstance(points, list):
+        return coords
+    for item in points:
+        if isinstance(item, dict):
+            lat = item.get("latitude", item.get("lat"))
+            lng = item.get("longitude", item.get("lng", item.get("lon")))
+            if lat is None or lng is None:
+                continue
+            try:
+                coords.append((float(lng), float(lat)))
+            except (TypeError, ValueError):
+                continue
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            try:
+                coords.append((float(item[0]), float(item[1])))
+            except (TypeError, ValueError):
+                continue
+    return coords
+
+
+def _wkt_for_kind(coords, kind) -> str | None:
+    if not coords or kind not in ("point", "line", "polygon"):
+        return None
+    if kind == "point":
+        lng, lat = coords[0]
+        return f"POINT({lng} {lat})"
+    if kind == "line":
+        if len(coords) < 2:
+            return None
+        body = ", ".join(f"{lng} {lat}" for lng, lat in coords)
+        return f"LINESTRING({body})"
+    if len(coords) < 3:
+        return None
+    ring = list(coords)
+    if ring[0] != ring[-1]:
+        ring.append(ring[0])
+    body = ", ".join(f"{lng} {lat}" for lng, lat in ring)
+    return f"POLYGON(({body}))"
+
+
+def _kind_for_coords(coords, column_kind, payload_kind) -> str | None:
+    if column_kind in ("point", "line", "polygon"):
+        return column_kind
+    if payload_kind in ("point", "line", "polygon"):
+        return payload_kind
+    if len(coords) >= 3:
+        return "polygon"
+    if len(coords) >= 2:
+        return "line"
+    if len(coords) == 1:
+        return "point"
+    return None
+
+
+def _wkt_from_geos(geom, column_kind) -> str | None:
+    gtype = geom.geom_type or ""
+    if column_kind == "point" and "Point" not in gtype:
+        return None
+    if column_kind == "line" and "Line" not in gtype:
+        return None
+    if column_kind == "polygon" and "Polygon" not in gtype:
+        return None
+    return geom.wkt
+
+
 def parse_geometry(val, col_type: str) -> str:
     """
-    Safely converts coordinate structures (GeoJSON dict, WKT, or Lat/Lng string)
-    into standard Well-Known Text (WKT).
+    Convert GeoJSON, WKT, a lat/lng pair, or mobile {points:[...]} capture
+    into WKT that matches the column.
+
+    A line or polygon payload must not be reduced to its first vertex.
+    Generic geometry columns (mixed) keep the captured shape.
     """
-    if not val:
+    if val is None or val == "":
         return None
-        
-    if isinstance(val, dict):
-        try:
-            # If standard coordinate array is submitted instead of GeoJSON, format it
-            if 'coordinates' not in val and 'type' not in val:
-                # E.g. {"latitude": -17.82, "longitude": 31.03}
-                if 'latitude' in val and 'longitude' in val:
-                    lat, lng = float(val['latitude']), float(val['longitude'])
-                    return f"POINT({lng} {lat})"
-            val = json.dumps(val)
-        except Exception:
+    column_kind = _column_geometry_kind(col_type)
+
+    if isinstance(val, str):
+        stripped = val.strip()
+        if not stripped:
             return None
-            
-    try:
-        # Standard GeoJSON or WKT
-        geom = GEOSGeometry(val)
-        return geom.wkt
-    except Exception:
-        # Fallback for coordinate string "lat, lng" e.g., "-17.8252, 31.0335"
-        if isinstance(val, str) and ',' in val:
+        if stripped[0] in "{[":
             try:
-                parts = [p.strip() for p in val.split(',')]
-                if len(parts) == 2:
-                    lat, lng = float(parts[0]), float(parts[1])
-                    return f"POINT({lng} {lat})"
-            except ValueError:
+                return parse_geometry(json.loads(stripped), col_type)
+            except json.JSONDecodeError:
+                return None
+        try:
+            return _wkt_from_geos(GEOSGeometry(stripped), column_kind)
+        except Exception:
+            if "," in stripped and column_kind in ("point", "any"):
+                try:
+                    parts = [p.strip() for p in stripped.split(",")]
+                    if len(parts) == 2:
+                        lat, lng = float(parts[0]), float(parts[1])
+                        return f"POINT({lng} {lat})"
+                except ValueError:
+                    return None
+            return None
+
+    if isinstance(val, (list, tuple)):
+        coords = _coord_pairs(list(val))
+        if not coords and len(val) == 2:
+            try:
+                coords = [(float(val[0]), float(val[1]))]
+            except (TypeError, ValueError):
+                return None
+        return _wkt_for_kind(coords, _kind_for_coords(coords, column_kind, None))
+
+    if isinstance(val, dict):
+        nested = val.get("geometry")
+        if isinstance(nested, dict) and nested is not val:
+            parsed = parse_geometry(nested, col_type)
+            if parsed:
+                return parsed
+
+        payload_kind = _payload_geometry_kind(val)
+        points = val.get("points")
+        if isinstance(points, list) and points:
+            coords = _coord_pairs(points)
+            wkt = _wkt_for_kind(
+                coords, _kind_for_coords(coords, column_kind, payload_kind)
+            )
+            if wkt:
+                return wkt
+
+        if val.get("type") and "coordinates" in val:
+            try:
+                geom = GEOSGeometry(json.dumps(val))
+                return _wkt_from_geos(geom, column_kind)
+            except Exception:
                 pass
+
+        lat = val.get("latitude", val.get("lat"))
+        lng = val.get("longitude", val.get("lng", val.get("lon")))
+        if lat is not None and lng is not None:
+            # A single vertex is a point. Do not use it to stand in for a
+            # line or polygon that failed to include its vertices.
+            if payload_kind in ("line", "polygon") or column_kind in (
+                "line",
+                "polygon",
+            ):
+                return None
+            try:
+                return f"POINT({float(lng)} {float(lat)})"
+            except (TypeError, ValueError):
+                return None
     return None
 
 
@@ -223,35 +371,62 @@ def copy_missing_submissions_to_live_table(form) -> int:
             )
             new_rows = cursor.fetchall()
 
-        if not new_rows:
-            continue
+        if new_rows:
+            uuid_to_new_id = {str(sub_uuid): new_id for sub_uuid, new_id in new_rows}
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT id, submission_uuid FROM {old} WHERE submission_uuid IN ({uuids})"
+                    ).format(
+                        old=sql.Identifier(old_table),
+                        uuids=sql.SQL(", ").join(
+                            sql.Placeholder() for _ in uuid_to_new_id
+                        ),
+                    ),
+                    list(uuid_to_new_id.keys()),
+                )
+                old_id_rows = cursor.fetchall()
 
-        uuid_to_new_id = {str(sub_uuid): new_id for sub_uuid, new_id in new_rows}
+            for old_id, sub_uuid in old_id_rows:
+                new_id = uuid_to_new_id.get(str(sub_uuid))
+                if new_id is None:
+                    continue
+                SubmissionIndex.objects.filter(
+                    form=form,
+                    physical_table_name=old_table,
+                    physical_row_id=old_id,
+                ).update(
+                    physical_table_name=live_table,
+                    physical_row_id=new_id,
+                )
+            copied += len(new_rows)
+
+        # Publish already copies rows into the new table and leaves
+        # SubmissionIndex on the old table. Point those at the live row
+        # so the detail drawer opens the same record the grid shows.
         with connection.cursor() as cursor:
             cursor.execute(
                 sql.SQL(
-                    "SELECT id, submission_uuid FROM {old} WHERE submission_uuid IN ({uuids})"
+                    """
+                    SELECT src.id, dest.id
+                    FROM {old} AS src
+                    INNER JOIN {live} AS dest
+                        ON dest.submission_uuid = src.submission_uuid
+                    """
                 ).format(
                     old=sql.Identifier(old_table),
-                    uuids=sql.SQL(", ").join(
-                        sql.Placeholder() for _ in uuid_to_new_id
-                    ),
-                ),
-                list(uuid_to_new_id.keys()),
+                    live=sql.Identifier(live_table),
+                )
             )
-            old_id_rows = cursor.fetchall()
+            already_live = cursor.fetchall()
 
-        for old_id, sub_uuid in old_id_rows:
-            new_id = uuid_to_new_id.get(str(sub_uuid))
-            if new_id is None:
-                continue
+        for old_id, live_id in already_live:
             SubmissionIndex.objects.filter(
                 form=form,
                 physical_table_name=old_table,
                 physical_row_id=old_id,
             ).update(
                 physical_table_name=live_table,
-                physical_row_id=new_id,
+                physical_row_id=live_id,
             )
-        copied += len(new_rows)
     return copied

@@ -56,6 +56,52 @@ def get_submissions_by_form_selector(form) -> list[dict]:
         return results
 
 
+def _answers_from_row(columns, row) -> dict:
+    answers = {}
+    for col, val in zip(columns, row):
+        if val is not None and any(
+            geom_key in col.lower()
+            for geom_key in (
+                "geom",
+                "location",
+                "point",
+                "line",
+                "polygon",
+                "boundary",
+                "area",
+            )
+        ):
+            try:
+                geom = GEOSGeometry(val)
+                answers[col] = json.loads(geom.geojson)
+            except Exception:
+                answers[col] = str(val)
+        elif isinstance(val, str) and val.startswith(("{", "[")):
+            try:
+                answers[col] = json.loads(val)
+            except Exception:
+                answers[col] = val
+        else:
+            answers[col] = val
+    return rewrite_media_urls_in_data(answers)
+
+
+def get_physical_row_answers(table_name: str, row_id) -> dict | None:
+    """Read one physical-table row the submissions grid is showing."""
+    if not table_name:
+        return None
+    with connection.cursor() as cursor:
+        query = sql.SQL("SELECT * FROM {} WHERE id = %s").format(
+            sql.Identifier(table_name)
+        )
+        cursor.execute(query, [row_id])
+        row = cursor.fetchone()
+        if not row:
+            return None
+        columns = [col[0] for col in cursor.description]
+        return _answers_from_row(columns, row)
+
+
 def get_submission_details_selector(submission_id: str) -> dict:
     """
     Retrieves metadata index and matching physical table answers.
@@ -67,49 +113,7 @@ def get_submission_details_selector(submission_id: str) -> dict:
     except SubmissionIndex.DoesNotExist:
         return None
 
-    table_name = sub_index.physical_table_name
-    row_id = sub_index.physical_row_id
-
-    with connection.cursor() as cursor:
-        query = sql.SQL("SELECT * FROM {} WHERE id = %s").format(
-            sql.Identifier(table_name)
-        )
-        cursor.execute(query, [row_id])
-        row = cursor.fetchone()
-
-        if not row:
-            return {"metadata": sub_index, "answers": {}}
-
-        columns = [col[0] for col in cursor.description]
-        answers = {}
-        for col, val in zip(columns, row):
-            if val is not None and any(
-                geom_key in col.lower()
-                for geom_key in (
-                    "geom",
-                    "location",
-                    "point",
-                    "line",
-                    "polygon",
-                    "boundary",
-                    "area",
-                )
-            ):
-                try:
-                    geom = GEOSGeometry(val)
-                    answers[col] = json.loads(geom.geojson)
-                except Exception:
-                    answers[col] = str(val)
-            else:
-                if isinstance(val, str) and val.startswith(("{", "[")):
-                    try:
-                        answers[col] = json.loads(val)
-                    except Exception:
-                        answers[col] = val
-                else:
-                    answers[col] = val
-
-        return {
-            "metadata": sub_index,
-            "answers": rewrite_media_urls_in_data(answers),
-        }
+    answers = get_physical_row_answers(
+        sub_index.physical_table_name, sub_index.physical_row_id
+    )
+    return {"metadata": sub_index, "answers": answers or {}}
