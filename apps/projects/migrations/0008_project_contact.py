@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("projects", "0006_project_name_unique_per_owner"),
+        ("projects", "0007_project_invite"),
     ]
 
     operations = [
