@@ -15,6 +15,14 @@ from apps.forms.services.question_schema import (
     walk_storage_questions,
 )
 from common.media_url_rewrite import rewrite_media_urls_in_data
+from apps.submissions.services.capture_info import (
+    CAPTURE_COLUMN_IDS,
+    apply_capture_columns,
+    capture_column_ids_owned_by_questions,
+    capture_display_by_row_id,
+    capture_export_headers,
+    empty_capture_columns,
+)
 from apps.submissions.services.submission_services import (
     copy_missing_submissions_to_live_table,
     display_date_for_format,
@@ -655,6 +663,9 @@ def get_web_geojson_service(form, user=None) -> dict:
         cursor.execute(query)
         rows = cursor.fetchall()
 
+    owned_capture_columns = capture_column_ids_owned_by_questions(form)
+    capture_by_row = capture_display_by_row_id(form, [row[0] for row in rows])
+
     user_id_index = (
         1 + metadata_cols.index("submitted_by_id")
         if "submitted_by_id" in metadata_cols
@@ -704,6 +715,10 @@ def get_web_geojson_service(form, user=None) -> dict:
             base_props["submitted_by"] = submitted_by_names.get(
                 submitted_by_id, str(submitted_by_id)
             )
+        capture_display = capture_by_row.get(row_id) or empty_capture_columns()
+        for key, value in capture_display.items():
+            if key not in owned_capture_columns:
+                base_props[key] = value
 
         for i, geom_json_raw in enumerate(geometry_values):
             if not geom_json_raw:
@@ -791,6 +806,7 @@ def get_web_columns_service(form) -> list:
                 "type": q.get("type", "text"),
             })
 
+    columns.extend(capture_export_headers(form))
     return columns
 
 
@@ -877,6 +893,8 @@ def get_web_paginated_data_service(
                 row_dict, date_version
             )
             results.append(rewrite_media_urls_in_data(row_dict))
+
+    apply_capture_columns(form, results)
 
     return {
         "data": results,
@@ -999,6 +1017,7 @@ def get_web_export_table_service(form, include_geometry: bool = False) -> dict:
                 "children": child_headers,
             })
 
+    main_headers.extend(capture_export_headers(form))
     header_ids = [h["id"] for h in main_headers]
     labels = [
         {
@@ -1043,7 +1062,7 @@ def get_web_export_table_service(form, include_geometry: bool = False) -> dict:
         cursor.execute(query)
         raw_rows = cursor.fetchall()
 
-    rows = []
+    records = []
     collection_sheets = {
         d["question_id"]: {
             "label": d["label"],
@@ -1077,13 +1096,7 @@ def get_web_export_table_service(form, include_geometry: bool = False) -> dict:
                     record[col] = _geometry_as_wkt(record[col])
 
         record = format_web_answer_record(record, date_version)
-
-        row_out = []
-        for hid in header_ids:
-            value = record.get(hid)
-            # Keep collection as JSON string in main sheet (Kobo main export style)
-            row_out.append(_serialize_cell(value))
-        rows.append(row_out)
+        records.append(record)
 
         for cdef in collection_defs:
             payload = record.get(cdef["column"])
@@ -1099,6 +1112,12 @@ def get_web_export_table_service(form, include_geometry: bool = False) -> dict:
                 for child in cdef["children"]:
                     sheet_row.append(_serialize_cell(item.get(child["id"])))
                 sheet["rows"].append(sheet_row)
+
+    apply_capture_columns(form, records)
+    rows = []
+    for record in records:
+        # Keep collection as JSON string in main sheet (Kobo main export style)
+        rows.append([_serialize_cell(record.get(hid)) for hid in header_ids])
 
     return {
         "headers": main_headers,
@@ -1356,7 +1375,7 @@ def build_kml_bytes(geojson: dict, document_name: str = "Export") -> bytes:
         data_xml = "".join(
             f'<Data name="{_escape_xml(key)}"><value>{_escape_xml(value)}</value></Data>'
             for key, value in props.items()
-            if value is not None and value != ""
+            if key in CAPTURE_COLUMN_IDS or (value is not None and value != "")
         )
         extended = (
             f"<ExtendedData>{data_xml}</ExtendedData>" if data_xml else ""

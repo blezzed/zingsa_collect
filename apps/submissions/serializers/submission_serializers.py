@@ -20,6 +20,7 @@ class SubmissionIndexSerializer(serializers.ModelSerializer):
             'id', 'project', 'form', 'form_version', 'submitted_by', 
             'submitted_by_username', 'device_id', 'client_submission_id', 
             'physical_table_name', 'physical_row_id', 'sync_status', 
-            'synced_at', 'created_at', 'updated_at', 'media_files'
+            'synced_at', 'capture_info', 'gps_accuracy_m', 'created_at',
+            'updated_at', 'media_files'
         ]
         read_only_fields = fields

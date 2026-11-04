@@ -39,6 +39,8 @@ class SubmissionIndex(models.Model):
     physical_row_id = models.IntegerField()
     sync_status = models.CharField(max_length=50, choices=SYNC_STATUS_CHOICES, default='synced')
     synced_at = models.DateTimeField(null=True, blank=True)
+    capture_info = models.JSONField(default=dict, blank=True)
+    gps_accuracy_m = models.FloatField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

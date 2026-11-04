@@ -57,7 +57,8 @@ def bulk_sync_submissions_service(
                     device_id=device_id,
                     form_version=form_version,
                     answers=answers,
-                    user=user
+                    user=user,
+                    capture_info=sub_data.get('capture_info'),
                 )
                 
                 if is_duplicate:
