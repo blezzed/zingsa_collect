@@ -39,6 +39,7 @@ class SingleSubmissionSyncView(APIView):
             form_version=form_version,
             answers=data.get('answers', {}),
             user=request.user,
+            capture_info=data.get('capture_info'),
         )
 
         serializer = SubmissionIndexSerializer(sub_index)

@@ -7,6 +7,10 @@ from rest_framework.exceptions import ValidationError
 from psycopg2 import sql
 
 from apps.submissions.models import SubmissionIndex, SubmissionMedia
+from apps.submissions.services.capture_info import (
+    create_submission_index,
+    prepare_capture_info,
+)
 from apps.forms.services.form_services import (
     generate_column_mapping_service,
     get_live_submission_version,
@@ -205,12 +209,16 @@ def sync_submission_to_physical_table_service(
     device_id: str,
     form_version,
     answers: dict,
-    user = None
+    user = None,
+    capture_info = None,
 ) -> tuple[SubmissionIndex, bool]:
     """
     Syncs offline submission details securely into the generated PostGIS table
     and creates a SubmissionIndex metadata entry.
-    
+
+    ``capture_info`` is optional. A duplicate returns the stored row unchanged.
+    A bad capture_info is dropped and does not fail this save.
+
     Returns (submission_index_instance, is_duplicate).
     """
     form = form_version.form
@@ -225,6 +233,8 @@ def sync_submission_to_physical_table_service(
     
     if existing:
         return existing, True
+
+    stored_capture, gps_accuracy_m = prepare_capture_info(capture_info)
 
     write_version = get_live_submission_version(form, fallback=form_version)
     table_name = getattr(write_version, "physical_table_name", None) if write_version else None
@@ -304,8 +314,8 @@ def sync_submission_to_physical_table_service(
         cursor.execute(insert_query, vals)
         row_id = cursor.fetchone()[0]
         
-    # Create the index entry
-    submission_index = SubmissionIndex.objects.create(
+    # Create the index entry. capture_info lives on this row, not the physical table.
+    submission_index = create_submission_index(
         project=project,
         form=form,
         form_version=form_version,
@@ -315,7 +325,9 @@ def sync_submission_to_physical_table_service(
         physical_table_name=table_name,
         physical_row_id=row_id,
         sync_status=sync_status,
-        synced_at=synced_at
+        synced_at=synced_at,
+        capture_info=stored_capture,
+        gps_accuracy_m=gps_accuracy_m,
     )
     
     return submission_index, False
@@ -325,6 +337,8 @@ def copy_missing_submissions_to_live_table(form) -> int:
     """
     Copy rows that still live only on older version tables into the live
     submissions table, and retarget SubmissionIndex at the new row ids.
+    capture_info and gps_accuracy_m stay on that same index row; only the
+    physical table name and row id are updated.
     """
     live_table = form.submission_table_name
     if not live_table or not physical_table_exists(live_table):
