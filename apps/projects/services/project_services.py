@@ -14,6 +14,8 @@ def create_project_service(
     """
     Creates and saves a Project instance, and assigns the owner as a Manager.
     Generates a unique code if none is provided.
+
+    Contact stays blank. The owner's name and email are not copied onto it.
     """
     if not code:
         code = f"PROJ-{uuid.uuid4().hex[:6].upper()}"

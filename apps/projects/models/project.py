@@ -29,6 +29,12 @@ class Project(models.Model):
         related_name='owned_projects'
     )
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='draft')
+    # Opt-in. Blank until an owner or manager saves them. Never copied
+    # from the owner's account, and not shown to collectors until then.
+    contact_name = models.CharField(max_length=150, blank=True, default='')
+    contact_phone = models.CharField(max_length=30, blank=True, default='')
+    contact_email = models.EmailField(max_length=254, blank=True, default='')
+    contact_note = models.CharField(max_length=300, blank=True, default='')
     role_privileges = models.JSONField(
         default=default_role_privileges,
         blank=True,
