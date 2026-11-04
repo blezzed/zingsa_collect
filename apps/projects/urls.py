@@ -6,6 +6,10 @@ from apps.projects.views.project_views import (
 )
 from apps.forms.views.form_views import ProjectFormListCreateView
 from apps.projects.views.member_views import ProjectMemberListCreateView, ProjectMemberDetailView
+from apps.projects.views.invite_views import (
+    ProjectInviteListCreateView,
+    ProjectInviteCancelView,
+)
 
 app_name = 'projects'
 
@@ -23,5 +27,15 @@ urlpatterns = [
         '<uuid:project_id>/members/<str:username>/',
         ProjectMemberDetailView.as_view(),
         name='member_detail',
+    ),
+    path(
+        '<uuid:project_id>/invites/',
+        ProjectInviteListCreateView.as_view(),
+        name='invite_list_create',
+    ),
+    path(
+        '<uuid:project_id>/invites/<uuid:invite_id>/cancel/',
+        ProjectInviteCancelView.as_view(),
+        name='invite_cancel',
     ),
 ]
