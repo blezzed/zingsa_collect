@@ -40,7 +40,9 @@ class ProjectFormListCreateView(APIView):
             'Project not found.',
         )
         forms = get_form_list_by_project_selector(project_id, user=request.user)
-        serializer = FormSerializer(forms, many=True)
+        serializer = FormSerializer(
+            forms, many=True, context={'request': request}
+        )
         return Response(serializer.data)
 
     def post(self, request, project_id):
@@ -60,7 +62,10 @@ class ProjectFormListCreateView(APIView):
             geometry_type=schema.get('geometryType', 'none'),
             description=schema.get('description'),
         )
-        return Response(FormSerializer(form).data, status=status.HTTP_201_CREATED)
+        return Response(
+            FormSerializer(form, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class FormDetailView(APIView):
@@ -77,14 +82,16 @@ class FormDetailView(APIView):
             get_form_by_id_selector(pk, user=request.user),
             'Form not found.',
         )
-        return Response(FormSerializer(form).data)
+        return Response(FormSerializer(form, context={'request': request}).data)
 
     def patch(self, request, pk):
         form = raise_if_missing(
             get_form_by_id_selector(pk, user=request.user),
             'Form not found.',
         )
-        serializer = FormSerializer(form, data=request.data, partial=True)
+        serializer = FormSerializer(
+            form, data=request.data, partial=True, context={'request': request}
+        )
         serializer.is_valid(raise_exception=True)
 
         data = dict(serializer.validated_data)
@@ -98,7 +105,7 @@ class FormDetailView(APIView):
             schema=schema,
             user=request.user,
         )
-        return Response(FormSerializer(form).data)
+        return Response(FormSerializer(form, context={'request': request}).data)
 
     def delete(self, request, pk):
         form = raise_if_missing(
@@ -148,7 +155,11 @@ class AvailableFormsView(APIView):
             is_demo_only=is_demo_only,
             user=request.user,
         )
-        serializer = FormSerializer(forms, many=True, context={'published_only': True})
+        serializer = FormSerializer(
+            forms,
+            many=True,
+            context={'published_only': True, 'request': request},
+        )
         return Response(serializer.data)
 
 

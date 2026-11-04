@@ -9,6 +9,7 @@ from rest_framework.exceptions import ValidationError
 from psycopg2 import sql
 
 from apps.forms.models import Form, FormVersion
+from apps.projects.services.project_contact import project_contact_block
 from apps.forms.services.question_schema import (
     resolve_geometry_type,
     schema_has_spatial_questions,
@@ -440,7 +441,7 @@ def create_form_service(
     while Form.objects.filter(project=project, slug=slug).exists():
         slug = f"{base_slug}_{counter}"
         counter += 1
-        
+
     form = Form.objects.create(
         project=project,
         title=title,
@@ -449,7 +450,7 @@ def create_form_service(
         mode=mode,
         geometry_type=geometry_type,
         status='draft',
-        created_by=created_by
+        created_by=created_by,
     )
     
     if schema is None:
@@ -823,5 +824,8 @@ def download_form_definition_service(
     # Mobile clients should replace any older local copy with this tip.
     schema['force_update'] = True
     schema['is_latest'] = True
-    
+    # Response-only. Read from the project. The stored schema and its checksum
+    # are left untouched. Logged-out callers get null.
+    schema['contact'] = project_contact_block(form.project, user)
+
     return schema

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from apps.forms.models import Form, FormVersion
 from apps.forms.services.form_services import get_latest_published_version
+from apps.projects.services.project_contact import project_contact_block
 
 
 class FormVersionSerializer(serializers.ModelSerializer):
@@ -22,11 +23,13 @@ class FormSerializer(serializers.ModelSerializer):
     published_version_number = serializers.SerializerMethodField()
     published_checksum = serializers.SerializerMethodField()
     force_update = serializers.SerializerMethodField()
+    contact = serializers.SerializerMethodField()
 
     class Meta:
         model = Form
         fields = [
-            'id', 'project', 'title', 'slug', 'description', 'mode',
+            'id', 'project', 'title', 'slug', 'description', 'contact',
+            'mode',
             'geometry_type', 'has_geodata', 'current_version', 'current_version_details',
             'published_version_number', 'published_checksum', 'force_update',
             'status', 'submission_table_name', 'submission_count', 'submission_bytes',
@@ -34,11 +37,19 @@ class FormSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'project', 'slug', 'current_version', 'status',
+            'id', 'project', 'slug', 'contact', 'current_version', 'status',
             'submission_table_name', 'submission_count', 'submission_bytes',
             'created_by', 'created_at',
             'updated_at', 'published_version_number', 'published_checksum', 'force_update',
         ]
+
+    def get_contact(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        project = getattr(obj, 'project', None)
+        if project is None:
+            return None
+        return project_contact_block(project, user)
 
     def _published_tip(self, obj):
         if self.context.get("published_only"):
