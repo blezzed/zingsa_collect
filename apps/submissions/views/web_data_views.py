@@ -22,6 +22,8 @@ from apps.submissions.services.web_data_services import (
     build_kml_bytes,
     build_spss_labels_bytes,
     delete_web_row_service,
+    format_web_answer_record,
+    version_for_date_display,
 )
 
 
@@ -211,6 +213,7 @@ class WebDataDetailView(APIView):
         )
         if answers is None:
             return Response({"detail": "Submission not found."}, status=404)
+        answers = format_web_answer_record(answers, version_for_date_display(form))
 
         sub_index = SubmissionIndex.objects.filter(
             form_id=form_id,

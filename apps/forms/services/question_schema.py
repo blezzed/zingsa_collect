@@ -59,6 +59,9 @@ SUPPORTED_QUESTION_TYPES = CANONICAL_QUESTION_TYPES | frozenset(
 
 CHOICE_TYPES = frozenset({"radio", "checkbox", "dropdown", "select"})
 
+# Precision of a date question. Absent means a full day, as older forms do.
+DATE_FORMATS = frozenset({"full_date", "month_year", "year"})
+
 CONDITION_OPERATORS = frozenset(
     {
         "equals",
@@ -78,6 +81,14 @@ CONDITION_OPERATORS = frozenset(
 )
 
 OPERATORS_WITHOUT_VALUE = frozenset({"is_empty", "is_not_empty"})
+
+
+def effective_date_format(question: dict) -> str:
+    """Absent dateFormat stays a full date so older forms do not change."""
+    raw = question.get("dateFormat") if isinstance(question, dict) else None
+    if raw in DATE_FORMATS:
+        return raw
+    return "full_date"
 
 
 def nested_questions(question: dict) -> list:
@@ -310,6 +321,16 @@ def _validate_type_specific(q: dict, q_type: str, path: str) -> None:
     _require_bool(q, "autocapture", path)
     _require_bool(q, "multiselect", path)
     _require_bool(q, "noUpload", path)
+
+    if "dateFormat" in q and q_type != "date":
+        raise ValidationError(
+            f"{path} 'dateFormat' is only allowed on date questions."
+        )
+    if q_type == "date" and q.get("dateFormat") is not None:
+        if q.get("dateFormat") not in DATE_FORMATS:
+            raise ValidationError(
+                f"{path} 'dateFormat' must be full_date, month_year, or year."
+            )
 
     if q_type in ("text", "textarea"):
         _optional_number(q, "minLength", path)

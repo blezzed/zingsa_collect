@@ -1,6 +1,8 @@
 import uuid
 import json
-from django.db import transaction, connection
+from datetime import date, datetime
+
+from django.db import transaction, connection, DataError
 from django.utils import timezone
 from django.contrib.gis.geos import GEOSGeometry
 from rest_framework.exceptions import ValidationError
@@ -12,6 +14,11 @@ from apps.forms.services.form_services import (
     get_live_submission_version,
     list_physical_table_columns,
     physical_table_exists,
+)
+from apps.forms.services.question_schema import (
+    effective_date_format,
+    nested_questions,
+    walk_storage_questions,
 )
 
 def _column_geometry_kind(col_type: str) -> str:
@@ -199,6 +206,219 @@ def parse_geometry(val, col_type: str) -> str:
     return None
 
 
+def _reject_date_answer(value, question_path: str) -> None:
+    """Same failure as an invalid DATE insert: the whole submission rolls back."""
+    shown = value if isinstance(value, str) else repr(value)
+    raise DataError(
+        f'invalid input syntax for type date: "{shown}" ({question_path})'
+    )
+
+
+def _split_date_parts(text: str, widths: tuple[int, ...]) -> tuple[str, ...]:
+    parts = text.split("-")
+    if len(parts) != len(widths):
+        raise ValueError(text)
+    if any(
+        len(part) != width or not part.isdigit()
+        for part, width in zip(parts, widths)
+    ):
+        raise ValueError(text)
+    return tuple(parts)
+
+
+def _date_without_time(text: str) -> str:
+    """A time suffix starts with T or a space. Keep the date as written."""
+    cut = len(text)
+    for separator in ("T", " "):
+        found = text.find(separator)
+        if found != -1 and found < cut:
+            cut = found
+    return text[:cut]
+
+
+def _iso_numbers(text: str, widths: tuple[int, ...]) -> tuple[int, ...]:
+    return tuple(int(part) for part in _split_date_parts(text, widths))
+
+
+def _stored_month_year(prefix: str) -> str:
+    """YYYY-MM, or a real YYYY-MM-DD, stored as the first of that month."""
+    parts = prefix.split("-")
+    if len(parts) == 2:
+        year, month = _iso_numbers(prefix, (4, 2))
+        parsed = date(year, month, 1)
+    elif len(parts) == 3:
+        year, month, day = _iso_numbers(prefix, (4, 2, 2))
+        parsed = date(year, month, day)
+    else:
+        raise ValueError(prefix)
+    return f"{parsed.year:04d}-{parsed.month:02d}-01"
+
+
+def _stored_year(prefix: str) -> str:
+    """YYYY, YYYY-MM, or a real YYYY-MM-DD, stored as 1 January."""
+    parts = prefix.split("-")
+    if len(parts) == 1:
+        if len(prefix) != 4 or not prefix.isdigit():
+            raise ValueError(prefix)
+        parsed = date(int(prefix), 1, 1)
+    elif len(parts) == 2:
+        year, month = _iso_numbers(prefix, (4, 2))
+        parsed = date(year, month, 1)
+    elif len(parts) == 3:
+        year, month, day = _iso_numbers(prefix, (4, 2, 2))
+        parsed = date(year, month, day)
+    else:
+        raise ValueError(prefix)
+    return f"{parsed.year:04d}-01-01"
+
+
+def stored_date_for_format(value, date_format: str, question_path: str):
+    """
+    Map a mobile date answer onto the DATE column.
+
+    Absent dateFormat and full_date are returned unchanged. Postgres accepts
+    or rejects them, as it did before this attribute existed. month_year is
+    stored as the first of that month, year as 1 January. A longer date, with
+    or without a time, is shortened the same way so an older app is not refused.
+    None and "" are left unchanged.
+    """
+    if value is None or value == "":
+        return value
+    if not date_format or date_format == "full_date":
+        return value
+    if not isinstance(value, str):
+        _reject_date_answer(value, question_path)
+    text = value.strip()
+    if text == "":
+        return value
+    prefix = _date_without_time(text)
+    try:
+        if date_format == "month_year":
+            return _stored_month_year(prefix)
+        if date_format == "year":
+            return _stored_year(prefix)
+    except ValueError:
+        _reject_date_answer(text, question_path)
+    _reject_date_answer(text, question_path)
+
+
+def _validate_collection_full_date(value, question_path: str) -> None:
+    """Explicit full_date in JSON: a real YYYY-MM-DD, plus an optional time suffix."""
+    if value is None or value == "":
+        return
+    if not isinstance(value, str):
+        _reject_date_answer(value, question_path)
+    text = value.strip()
+    if text == "":
+        return
+    try:
+        year, month, day = _iso_numbers(_date_without_time(text), (4, 2, 2))
+        date(year, month, day)
+    except ValueError:
+        _reject_date_answer(text, question_path)
+
+
+def display_date_for_format(value, date_format: str):
+    """Show a stored DATE as the question's dateFormat."""
+    parsed = _stored_date_value(value)
+    if parsed is None:
+        return value
+    if date_format == "year":
+        return f"{parsed.year:04d}"
+    if date_format == "month_year":
+        return f"{parsed.year:04d}-{parsed.month:02d}"
+    return parsed.isoformat()
+
+
+def _stored_date_value(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+            try:
+                return date.fromisoformat(text[:10])
+            except ValueError:
+                return None
+    return None
+
+
+def _date_answer_context(questions: list) -> tuple[dict, dict]:
+    """Date column formats, and collection questions whose dates live in JSONB."""
+    formats = {}
+    collections = {}
+    for question in walk_storage_questions(questions or []):
+        q_id = question.get("id")
+        if not q_id:
+            continue
+        q_type = (question.get("type") or "").lower()
+        if q_type == "date":
+            formats[q_id] = effective_date_format(question)
+        elif q_type == "collection":
+            collections[q_id] = question
+    return formats, collections
+
+
+def _validate_repeat_item(item: dict, questions: list, path: str) -> None:
+    for question in questions or []:
+        if not isinstance(question, dict):
+            continue
+        q_type = (question.get("type") or "").lower()
+        q_id = question.get("id")
+        nested = nested_questions(question)
+        if q_type in ("section", "group", "note"):
+            # Groups are layout. Child answers sit on the same repeat item.
+            _validate_repeat_item(item, nested, path)
+            continue
+        if q_type == "collection" and q_id and q_id in item:
+            _validate_repeat_list(item.get(q_id), nested, f"{path}.{q_id}")
+            continue
+        if q_type != "date" or not q_id or q_id not in item:
+            continue
+        # No dateFormat attribute at all: store the JSON as sent, with no date check.
+        # effective_date_format would turn that absence into full_date.
+        if "dateFormat" not in question:
+            continue
+        question_path = f"{path}.{q_id}"
+        raw_format = question.get("dateFormat")
+        if raw_format == "full_date":
+            _validate_collection_full_date(item.get(q_id), question_path)
+            continue
+        # Check the shape, and leave the original string in the JSONB payload.
+        stored_date_for_format(item.get(q_id), raw_format, question_path)
+
+
+def _validate_repeat_list(value, questions: list, path: str) -> None:
+    if value is None or value == "":
+        return
+    items = value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return
+        try:
+            items = json.loads(stripped)
+        except json.JSONDecodeError:
+            return
+    if not isinstance(items, list):
+        return
+    for index, item in enumerate(items):
+        if isinstance(item, dict):
+            _validate_repeat_item(item, questions, f"{path}[{index}]")
+
+
+def validate_collection_date_answers(value, collection_question: dict, path: str) -> None:
+    """Reject a collection date that does not match its dateFormat.
+
+    A date question with no dateFormat attribute is not checked. Valid values stay as sent.
+    """
+    _validate_repeat_list(value, nested_questions(collection_question), path)
+
+
 @transaction.atomic
 def sync_submission_to_physical_table_service(
     client_submission_id: str,
@@ -252,7 +472,19 @@ def sync_submission_to_physical_table_service(
 
     # Generate column types to parse geometry columns
     _, db_types = generate_column_mapping_service(questions)
-    
+
+    # Prefer the version the device downloaded. Its dateFormat is what it sent.
+    live_formats, live_collections = {}, {}
+    if write_version is not None:
+        live_formats, live_collections = _date_answer_context(
+            (write_version.schema or {}).get("questions", [])
+        )
+    device_formats, device_collections = _date_answer_context(
+        (form_version.schema or {}).get("questions", [])
+    )
+    date_formats = {**live_formats, **device_formats}
+    collection_questions = {**live_collections, **device_collections}
+
     submission_uuid = uuid.uuid4()
     synced_at = timezone.now()
     sync_status = 'synced'
@@ -278,7 +510,14 @@ def sync_submission_to_physical_table_service(
                 
             col_name = column_mapping[q_id]
             col_type = db_types.get(col_name, 'TEXT')
-            
+
+            if q_id in date_formats:
+                val = stored_date_for_format(val, date_formats[q_id], q_id)
+            elif q_id in collection_questions:
+                validate_collection_date_answers(
+                    val, collection_questions[q_id], q_id
+                )
+
             col_identifiers.append(sql.Identifier(col_name))
             
             if "GEOMETRY" in col_type.upper():

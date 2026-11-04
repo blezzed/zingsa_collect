@@ -231,3 +231,55 @@ class QuestionSchemaServicesTests(TestCase):
                     ],
                 }
             )
+
+    def test_date_format_accepts_each_value(self):
+        for date_format in ("full_date", "month_year", "year"):
+            validate_form_schema_service(
+                {
+                    **GARDEN_COLLECTION_SCHEMA,
+                    "questions": [
+                        {
+                            "id": "when",
+                            "type": "date",
+                            "label": "When",
+                            "dateFormat": date_format,
+                        }
+                    ],
+                }
+            )
+
+    def test_date_format_rejects_unknown_value(self):
+        with self.assertRaises(Exception) as caught:
+            validate_form_schema_service(
+                {
+                    **GARDEN_COLLECTION_SCHEMA,
+                    "questions": [
+                        {
+                            "id": "when",
+                            "type": "date",
+                            "label": "When",
+                            "dateFormat": "week",
+                        }
+                    ],
+                }
+            )
+        self.assertIn("questions[0]", str(caught.exception))
+        self.assertIn("dateFormat", str(caught.exception))
+
+    def test_date_format_rejected_on_text_question(self):
+        with self.assertRaises(Exception) as caught:
+            validate_form_schema_service(
+                {
+                    **GARDEN_COLLECTION_SCHEMA,
+                    "questions": [
+                        {
+                            "id": "name",
+                            "type": "text",
+                            "label": "Name",
+                            "dateFormat": "month_year",
+                        }
+                    ],
+                }
+            )
+        self.assertIn("questions[0]", str(caught.exception))
+        self.assertIn("dateFormat", str(caught.exception))

@@ -5,9 +5,11 @@ from django.db import connection, transaction
 from django.contrib.gis.geos import GEOSGeometry
 from psycopg2 import sql
 
+from apps.forms.services.form_services import get_latest_published_version
 from apps.forms.services.question_schema import (
     SPATIAL_QUESTION_TYPES,
     collection_question_columns,
+    effective_date_format,
     nested_questions,
     walk_all_questions,
     walk_storage_questions,
@@ -15,6 +17,7 @@ from apps.forms.services.question_schema import (
 from common.media_url_rewrite import rewrite_media_urls_in_data
 from apps.submissions.services.submission_services import (
     copy_missing_submissions_to_live_table,
+    display_date_for_format,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,6 +30,48 @@ def _ensure_live_submissions(form) -> None:
         logger.exception(
             "Could not copy older-version submissions into the live table"
         )
+
+
+def _date_display_by_key(version) -> dict[str, str]:
+    """Question id and physical column name to the dateFormat used when reading."""
+    if version is None or not getattr(version, "column_mapping", None):
+        return {}
+    questions = (getattr(version, "schema", None) or {}).get("questions", [])
+    formats: dict[str, str] = {}
+    for question in walk_storage_questions(questions):
+        if (question.get("type") or "").lower() != "date":
+            continue
+        date_format = effective_date_format(question)
+        q_id = question.get("id")
+        if not q_id:
+            continue
+        formats[q_id] = date_format
+        column = version.column_mapping.get(q_id)
+        if column:
+            formats[column] = date_format
+    return formats
+
+
+def format_web_answer_record(record: dict, version) -> dict:
+    """Show DATE columns as full_date, month_year, or year. Collection JSON is left as stored."""
+    if not isinstance(record, dict):
+        return record
+    formats = _date_display_by_key(version)
+    if not formats:
+        return record
+    formatted = dict(record)
+    for key, date_format in formats.items():
+        if key in formatted:
+            formatted[key] = display_date_for_format(formatted[key], date_format)
+    return formatted
+
+
+def version_for_date_display(form):
+    """Published questions decide how a stored date is shown. A draft is used only when nothing is published."""
+    published = get_latest_published_version(form)
+    if published is not None:
+        return published
+    return form.current_version
 
 
 def _is_geojson_geometry(value) -> bool:
@@ -606,6 +651,7 @@ def get_web_geojson_service(form, user=None) -> dict:
             cols=sql.SQL(", ").join(select_parts),
             table=sql.Identifier(table_name),
         )
+        date_version = version_for_date_display(form)
         cursor.execute(query)
         rows = cursor.fetchall()
 
@@ -644,6 +690,9 @@ def get_web_geojson_service(form, user=None) -> dict:
             answer_values[question_id] = value
             answer_values_by_column[col] = value
             cursor_offset += 1
+        answer_values = format_web_answer_record(
+            answer_values, date_version
+        )
         geometry_values = row[cursor_offset:]
         submitted_by_id = row_values.get("submitted_by_id")
         base_props = {
@@ -809,6 +858,7 @@ def get_web_paginated_data_service(
             where=where_sql,
         )
 
+        date_version = version_for_date_display(form)
         cursor.execute(query, [*where_params, limit, offset])
         rows = cursor.fetchall()
 
@@ -823,6 +873,9 @@ def get_web_paginated_data_service(
                         row_dict[col] = val
                 else:
                     row_dict[col] = val
+            row_dict = format_web_answer_record(
+                row_dict, date_version
+            )
             results.append(rewrite_media_urls_in_data(row_dict))
 
     return {
@@ -986,6 +1039,7 @@ def get_web_export_table_service(form, include_geometry: bool = False) -> dict:
             cols=sql.SQL(", ").join(select_parts),
             table=sql.Identifier(table_name),
         )
+        date_version = version_for_date_display(form)
         cursor.execute(query)
         raw_rows = cursor.fetchall()
 
@@ -1021,6 +1075,8 @@ def get_web_export_table_service(form, include_geometry: bool = False) -> dict:
             for col in generic_geometry_cols:
                 if col in record:
                     record[col] = _geometry_as_wkt(record[col])
+
+        record = format_web_answer_record(record, date_version)
 
         row_out = []
         for hid in header_ids:
