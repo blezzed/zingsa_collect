@@ -37,6 +37,7 @@ urlpatterns = [
     path('api/accounts/', include('apps.accounts.urls')),
     path('api/organizations/', include('apps.organizations.urls')),
     path('api/projects/', include('apps.projects.urls')),
+    path('api/invites/', include('apps.projects.invite_urls')),
     path('api/forms/', include('apps.forms.urls')),
     path('api/submissions/', include('apps.submissions.urls')),
     path('api/media/', include('apps.mediafiles.urls')),

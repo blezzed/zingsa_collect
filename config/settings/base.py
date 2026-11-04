@@ -279,6 +279,11 @@ REST_FRAMEWORK = {
     # Keep ?format= for our export APIs (xlsx/csv/...). DRF's default uses
     # this query param for content negotiation and returns 404 for unknown formats.
     'URL_FORMAT_OVERRIDE': None,
+    # Invite verify and join only. Counters go through Django's default cache.
+    # CACHES is unset, so that cache is the process-local memory backend.
+    'DEFAULT_THROTTLE_RATES': {
+        'invite_code': '30/min',
+    },
 }
 
 # SimpleJWT Settings
